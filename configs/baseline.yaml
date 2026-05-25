@@ -1,0 +1,34 @@
+experiment_name: "chignolin_baseline"
+model_type: "transformer"       # 'mlp' or 'transformer'
+
+data:
+  train_path:   "data/train.npz"
+  val_path:     "data/valid.npz"
+  test_path:    "data/test.npz"
+  n_residues:   10
+  augment_se3:  false
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+model:
+  hidden_dim: 128
+  n_heads:    4
+  n_layers:   4
+  time_dim:   64
+  dropout:    0.1
+
+training:
+  batch_size:   64
+  lr:           3.0e-4
+  n_epochs:     500
+  warmup_steps: 500
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+
+paths:
+  checkpoint_dir: "checkpoints/baseline"
