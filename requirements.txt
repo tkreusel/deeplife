@@ -1,0 +1,12 @@
+# Install with:  pip install -r requirements.txt
+#
+# For GPU (CUDA) builds of PyTorch, install torch separately first, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then run the command above. See https://pytorch.org/get-started/locally/
+
+torch>=2.1
+numpy>=1.24
+matplotlib>=3.7
+PyYAML>=6.0
+tqdm>=4.65
+
