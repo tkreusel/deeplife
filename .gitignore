@@ -88,6 +88,10 @@ plots/
 *.pdb
 *.cif
 
+# ─── Personal / machine-specific configs ──────────────────────────────────────
+# Create configs/*_personal.yaml for your own machine paths (never commit these)
+configs/*personal*
+
 # ─── Secrets / config overrides ───────────────────────────────────────────────
 .env
 .env.*

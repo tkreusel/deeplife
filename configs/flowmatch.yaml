@@ -1,0 +1,41 @@
+experiment_name: "chignolin_flowmatch"
+model_type:      "flowmatch"          # SE(3)-equivariant flow matching (EGNN backbone)
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false                  # EGNN is already equivariant; augmentation optional
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4                   # small noise floor on the interpolant
+
+# ── EGNN velocity network (production size — matches egnn.yaml) ───────────────
+model:
+  hidden_dim: 128                     # node feature dimension
+  edge_dim:   64                      # edge feature dimension
+  n_layers:   5                       # number of EGNN message-passing layers
+  time_dim:   64                      # sinusoidal timestep embedding dimension
+  dropout:    0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   512
+  lr:           1.0e-4                # slightly conservative (EGNN is sensitive)
+  n_epochs:     500
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true                  # enable AMP on GPU (~2× throughput)
+  compile:      true                  # torch.compile if PyTorch ≥ 2.0
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch"

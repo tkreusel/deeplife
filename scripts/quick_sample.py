@@ -21,6 +21,14 @@ from models.diffusion import GaussianDiffusion
 from scripts.train import build_model
 
 
+def _strip_compile_prefix(state_dict: dict) -> dict:
+    """Remove '_orig_mod.' prefix added by torch.compile when loading at inference."""
+    return {
+        (k[len('_orig_mod.'):] if k.startswith('_orig_mod.') else k): v
+        for k, v in state_dict.items()
+    }
+
+
 # ── Sample ────────────────────────────────────────────────────────────────────
 
 def sample(checkpoint_path: str, n: int = 10, ddim_steps: int = 100):
@@ -29,15 +37,32 @@ def sample(checkpoint_path: str, n: int = 10, ddim_steps: int = 100):
 
     ckpt   = torch.load(checkpoint_path, map_location=device)
     config = ckpt['config']
+    mt     = config['model_type']
 
-    model = build_model(config).to(device)
-    model.load_state_dict(ckpt['ema_shadow'])
+    if mt == 'flowmatch':
+        from models.egnn          import EGNNScoreNetwork
+        from models.flow_matching import ZeroCoMFlowMatching
+        mc    = config['model']
+        model = EGNNScoreNetwork(
+            n_residues = config['data']['n_residues'],
+            node_dim   = mc['hidden_dim'],
+            edge_dim   = mc.get('edge_dim', 64),
+            time_dim   = mc['time_dim'],
+            n_layers   = mc['n_layers'],
+        ).to(device)
+        fc        = config.get('flow', {})
+        diffusion = ZeroCoMFlowMatching(
+            sigma_min = fc.get('sigma_min', 1e-4)
+        ).to(device)
+    else:
+        model     = build_model(config).to(device)
+        dc        = config['diffusion']
+        diffusion = GaussianDiffusion(T=dc['T'], schedule=dc['schedule']).to(device)
+
+    model.load_state_dict(_strip_compile_prefix(ckpt['ema_shadow']))
     model.eval()
-    print(f"Loaded checkpoint — epoch {ckpt['epoch']+1}, "
+    print(f"Loaded {mt} checkpoint — epoch {ckpt['epoch']+1}, "
           f"best val loss: {ckpt['best_val_loss']:.4f}")
-
-    dc        = config['diffusion']
-    diffusion = GaussianDiffusion(T=dc['T'], schedule=dc['schedule']).to(device)
 
     coord_scale = config['data'].get('coord_scale', 16.32)
     print(f"Coord scale: {coord_scale}")

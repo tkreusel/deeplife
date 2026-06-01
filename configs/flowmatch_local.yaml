@@ -1,0 +1,41 @@
+experiment_name: "chignolin_flowmatch"
+model_type:      "flowmatch"          # SE(3)-equivariant flow matching (EGNN backbone)
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false                  # EGNN is already equivariant; augmentation optional
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4                   # small noise floor on the interpolant
+
+# ── EGNN velocity network ─────────────────────────────────────────────────────
+# Tiny model for CPU smoke test (runs in ~1 min)
+model:
+  hidden_dim: 32                      # node feature dimension
+  edge_dim:   16                      # edge feature dimension
+  n_layers:   2                       # number of EGNN message-passing layers
+  time_dim:   16                      # sinusoidal timestep embedding dimension
+  dropout:    0.0
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   32
+  lr:           1.0e-4
+  n_epochs:     5
+  warmup_steps: 10
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    1
+  save_every:   5
+  num_workers:  0                     # 0 for CPU (no DataLoader workers)
+  amp:          false                 # AMP only useful on CUDA
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch"

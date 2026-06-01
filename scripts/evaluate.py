@@ -51,6 +51,22 @@ from models.diffusion          import GaussianDiffusion
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _strip_compile_prefix(state_dict: dict) -> dict:
+    """
+    Remove the '_orig_mod.' prefix that torch.compile adds to parameter names.
+    Training scripts create EMA after torch.compile, so the EMA shadow may
+    contain '_orig_mod.*' keys that don't match an uncompiled model at inference.
+    """
+    return {
+        (k[len('_orig_mod.'):] if k.startswith('_orig_mod.') else k): v
+        for k, v in state_dict.items()
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MODEL LOADING  (auto-detects model_type from checkpoint)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -59,13 +75,19 @@ def load_model_from_ckpt(ckpt_path: str, device: str):
     Load model + diffusion from any checkpoint in this repo.
     Reads model_type from the saved config to pick the right class.
 
+    Supported model_type values:
+      'egnn'        — EGNNScoreNetwork + ZeroCoMGaussianDiffusion (DDPM)
+      'mlp'         — MLPScoreNetwork  + GaussianDiffusion (DDPM)
+      'transformer' — TransformerScoreNetwork + GaussianDiffusion (DDPM)
+      'flowmatch'   — EGNNScoreNetwork + ZeroCoMFlowMatching (OT-CFM, SE(3)-equivariant)
+
     Returns (model, diffusion, config, coord_scale)
     """
     ckpt   = torch.load(ckpt_path, map_location=device)
     config = ckpt['config']
     mt     = config['model_type']
 
-    # ── Build the model ────────────────────────────────────────────────────
+    # ── Build model + diffusion (one branch per model_type) ───────────────
     if mt == 'egnn':
         from models.egnn import EGNNScoreNetwork
         mc    = config['model']
@@ -76,21 +98,36 @@ def load_model_from_ckpt(ckpt_path: str, device: str):
             time_dim   = mc['time_dim'],
             n_layers   = mc['n_layers'],
         )
-        DiffClass = ZeroCoMGaussianDiffusion
+        dc        = config['diffusion']
+        diffusion = ZeroCoMGaussianDiffusion(T=dc['T'], schedule=dc['schedule'])
+
     elif mt in ('mlp', 'transformer'):
         from scripts.train import build_model
         model     = build_model(config)
-        DiffClass = GaussianDiffusion
+        dc        = config['diffusion']
+        diffusion = GaussianDiffusion(T=dc['T'], schedule=dc['schedule'])
+
+    elif mt == 'flowmatch':
+        from models.egnn          import EGNNScoreNetwork
+        from models.flow_matching import ZeroCoMFlowMatching
+        mc    = config['model']
+        model = EGNNScoreNetwork(
+            n_residues = config['data']['n_residues'],
+            node_dim   = mc['hidden_dim'],
+            edge_dim   = mc.get('edge_dim', 64),
+            time_dim   = mc['time_dim'],
+            n_layers   = mc['n_layers'],
+        )
+        fc        = config.get('flow', {})
+        diffusion = ZeroCoMFlowMatching(sigma_min=fc.get('sigma_min', 1e-4))
+
     else:
         raise ValueError(f"Unknown model_type: {mt!r}")
 
-    # Load EMA weights (best quality)
-    model.load_state_dict(ckpt['ema_shadow'])
-    model = model.to(device)
-    model.eval()
-
-    dc        = config['diffusion']
-    diffusion = DiffClass(T=dc['T'], schedule=dc['schedule']).to(device)
+    # ── Shared: load EMA weights, move to device ───────────────────────────
+    model.load_state_dict(_strip_compile_prefix(ckpt['ema_shadow']))
+    model     = model.to(device).eval()
+    diffusion = diffusion.to(device)
 
     coord_scale = config['data'].get('coord_scale', 16.32)
     epoch       = ckpt.get('epoch', '?')
@@ -296,7 +333,8 @@ def plot_comparison(samples_dict: dict, reference: np.ndarray, save_path: str = 
 # PDB EXPORT  (identical to quick_sample.py but shared here)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_pdbs(samples: np.ndarray, out_dir: str, n_save: int = 10):
+def save_pdbs(samples: np.ndarray, out_dir: str, n_save: int = 10,
+              label: str = "generated"):
     out      = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     sequence = "YYDPETGTWG"
@@ -304,7 +342,7 @@ def save_pdbs(samples: np.ndarray, out_dir: str, n_save: int = 10):
                 'G':'GLY','W':'TRP','A':'ALA','K':'LYS','R':'ARG'}
 
     for i, coords in enumerate(samples[:n_save]):
-        lines = [f"REMARK  EGNN generated sample {i+1}\n"]
+        lines = [f"REMARK  {label} sample {i+1}\n"]
         for j, (res, xyz) in enumerate(zip(sequence, coords)):
             x, y, z = xyz
             rn = aa3.get(res, 'GLY')
@@ -324,27 +362,68 @@ def save_pdbs(samples: np.ndarray, out_dir: str, n_save: int = 10):
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _make_label(config: dict, used: set) -> str:
+    """Derive a unique label from a checkpoint config."""
+    base = config['model_type'].upper()
+    label = base
+    suffix = 2
+    while label in used:
+        label = f"{base}_{suffix}"
+        suffix += 1
+    return label
+
+
 def main():
-    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description=(
+            "Evaluate one or more checkpoints against the test set.\n\n"
+            "Single model:\n"
+            "  python scripts/evaluate.py --ckpt checkpoints/flowmatch/v2/best.pt --test data/test.npz\n\n"
+            "Compare N models at once:\n"
+            "  python scripts/evaluate.py \\\n"
+            "      --ckpt checkpoints/flowmatch/v2/best.pt \\\n"
+            "      --ckpt_ref checkpoints/baseline/v3/best.pt checkpoints/v2/best.pt \\\n"
+            "      --labels FlowMatch Transformer EGNN \\\n"
+            "      --test data/test.npz --n 1000 --save plots/comparison.png"
+        )
+    )
+    # ── Checkpoints ───────────────────────────────────────────────────────────
+    # --ckpt_ref now accepts multiple paths so you can compare N models at once.
+    # Single-path usage (--ckpt_ref path) is fully backward compatible.
     p.add_argument('--ckpt',     required=True,
-                   help='Primary checkpoint (EGNN or baseline)')
-    p.add_argument('--ckpt_ref', default=None,
-                   help='Optional second checkpoint for side-by-side comparison')
+                   help='Primary checkpoint')
+    p.add_argument('--ckpt_ref', nargs='*', default=[],
+                   help='One or more additional checkpoints for comparison')
+    p.add_argument('--labels',   nargs='*', default=None,
+                   help='Custom label for each checkpoint (must match total '
+                        'number of --ckpt + --ckpt_ref paths). '
+                        'Defaults to model_type in uppercase.')
+    # ── Evaluation options ────────────────────────────────────────────────────
     p.add_argument('--test',     required=True,
                    help='Path to test.npz')
     p.add_argument('--n',        type=int, default=500,
-                   help='Number of structures to generate')
+                   help='Number of structures to generate per model')
     p.add_argument('--steps',    type=int, default=100,
-                   help='DDIM steps (more = slower, better quality)')
+                   help='Sampling steps (DDIM steps for DDPM; ODE steps for '
+                        'flow matching — Heun\'s method uses 2 NFE per step)')
     p.add_argument('--save_pdb', default=None,
-                   help='Directory to write PDB files')
+                   help='Directory to write PDB files for the primary model')
     p.add_argument('--save',     default=None,
-                   help='Path to save comparison plot (e.g. plots/eval.png)')
+                   help='Path to save comparison plot, e.g. plots/eval.png')
     p.add_argument('--out_json', default=None,
-                   help='Path to save metrics JSON')
+                   help='Path to save metrics JSON (default: next to primary ckpt)')
     p.add_argument('--batch',    type=int, default=256)
     p.add_argument('--seed',     type=int, default=0)
     args = p.parse_args()
+
+    # ── Validate labels ───────────────────────────────────────────────────────
+    all_ckpts = [args.ckpt] + list(args.ckpt_ref)
+    if args.labels is not None and len(args.labels) != len(all_ckpts):
+        p.error(
+            f"--labels has {len(args.labels)} entries but there are "
+            f"{len(all_ckpts)} checkpoints (--ckpt + --ckpt_ref)."
+        )
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -352,42 +431,44 @@ def main():
     print(f"Device: {device}")
 
     # ── Load test set ─────────────────────────────────────────────────────────
-    test_data  = np.load(args.test)
-    reference  = test_data['coords'].astype(np.float32)
-    centroids  = test_data['centroids']
+    test_data = np.load(args.test)
+    reference = test_data['coords'].astype(np.float32)
+    centroids = test_data['centroids']
     if centroids.ndim == 2:
         centroids = centroids[:, None, :]
-    reference  = reference - centroids          # center with saved centroids
+    reference = reference - centroids
     print(f"Test set: {len(reference):,} structures")
 
-    # ── Generate from primary checkpoint ─────────────────────────────────────
-    print(f"\nLoading primary checkpoint: {args.ckpt}")
-    model, diffusion, config, scale = load_model_from_ckpt(args.ckpt, device)
-    label = config['model_type'].upper()
+    # ── Generate + evaluate each checkpoint ───────────────────────────────────
+    samples_dict  = {}
+    metrics_all   = {}
+    primary_samples = None
 
-    print(f"Generating {args.n} samples ({label}) …")
-    samples = generate(model, diffusion, args.n,
-                       config['data']['n_residues'], scale,
-                       args.steps, device, args.batch)
+    used_labels = set()
+    for i, ckpt_path in enumerate(all_ckpts):
+        print(f"\n{'─'*60}")
+        print(f"Loading checkpoint {i+1}/{len(all_ckpts)}: {ckpt_path}")
+        model, diffusion, config, scale = load_model_from_ckpt(ckpt_path, device)
 
-    samples_dict = {label: samples}
-    metrics_all  = {label: compute_all_metrics(samples, reference)}
-    print_table(metrics_all[label], label=label)
+        if args.labels is not None:
+            label = args.labels[i]
+        else:
+            label = _make_label(config, used_labels)
+        used_labels.add(label)
 
-    # ── Optional: second checkpoint ───────────────────────────────────────────
-    if args.ckpt_ref:
-        print(f"\nLoading reference checkpoint: {args.ckpt_ref}")
-        m2, d2, cfg2, scale2 = load_model_from_ckpt(args.ckpt_ref, device)
-        label2 = cfg2['model_type'].upper() + "_ref"
+        print(f"Generating {args.n} samples ({label}) …")
+        samples = generate(
+            model, diffusion, args.n,
+            config['data']['n_residues'], scale,
+            args.steps, device, args.batch,
+        )
 
-        print(f"Generating {args.n} samples ({label2}) …")
-        samples2 = generate(m2, d2, args.n,
-                             cfg2['data']['n_residues'], scale2,
-                             args.steps, device, args.batch)
+        if primary_samples is None:
+            primary_samples = samples
 
-        samples_dict[label2] = samples2
-        metrics_all[label2]  = compute_all_metrics(samples2, reference)
-        print_table(metrics_all[label2], label=label2)
+        samples_dict[label] = samples
+        metrics_all[label]  = compute_all_metrics(samples, reference)
+        print_table(metrics_all[label], label=label)
 
     # ── Metrics JSON ──────────────────────────────────────────────────────────
     out_json = args.out_json or str(Path(args.ckpt).parent / 'eval_metrics.json')
@@ -398,9 +479,10 @@ def main():
     # ── Plot ──────────────────────────────────────────────────────────────────
     plot_comparison(samples_dict, reference, save_path=args.save)
 
-    # ── PDB files ─────────────────────────────────────────────────────────────
+    # ── PDB files from primary checkpoint only ────────────────────────────────
     if args.save_pdb:
-        save_pdbs(samples, args.save_pdb, n_save=20)
+        primary_label = list(samples_dict.keys())[0]
+        save_pdbs(primary_samples, args.save_pdb, n_save=20, label=primary_label)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,19 @@
+name: deeplife
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - torch>=2.1
+      - numpy>=1.24
+      - matplotlib>=3.7
+      - PyYAML>=6.0
+      - tqdm>=4.65
+
+# GPU note: the pip torch above installs a CPU build by default.
+# For CUDA 12.4 (recommended for cluster/A100), replace with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# See COLLAB/SETUP.md for full GPU setup instructions.

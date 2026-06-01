@@ -2,9 +2,9 @@ experiment_name: "chignolin_egnn"
 model_type: "egnn"             # ← key difference from baseline.yaml
 
 data:
-  train_path:   "/g/korbel2/shahp/deeplife/data/train.npz"
-  val_path:     "/g/korbel2/shahp/deeplife/data/val.npz"
-  test_path:    "/g/korbel2/shahp/deeplife/data/test.npz"
+  train_path:   "data/train.npz"
+  val_path:     "data/val.npz"
+  test_path:    "data/test.npz"
   n_residues:   10
   augment_se3:  false          # EGNN is already equivariant; augmentation optional
   coord_scale:  5.0            # same as baseline — scales coords to unit-ish variance
@@ -23,7 +23,7 @@ model:
 training:
   batch_size:   512
   lr:           1.0e-4         # slightly lower than baseline (EGNN is more sensitive)
-  n_epochs:     200
+  n_epochs:     500
   warmup_steps: 1000
   grad_clip:    1.0
   ema_decay:    0.9999
@@ -32,4 +32,4 @@ training:
   num_workers:  4
 
 paths:
-  checkpoint_dir: "/g/korbel2/shahp/deeplife/checkpoints/"
+  checkpoint_dir: "checkpoints/egnn"

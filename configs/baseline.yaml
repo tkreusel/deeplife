@@ -4,7 +4,7 @@ model_type: "transformer"       # 'mlp' or 'transformer'
 
 data:
   train_path:   "data/train.npz"
-  val_path:     "data/valid.npz"
+  val_path:     "data/val.npz"
   test_path:    "data/test.npz"
   n_residues:   10
   augment_se3:  false
