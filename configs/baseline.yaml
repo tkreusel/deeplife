@@ -1,6 +1,7 @@
 experiment_name: "chignolin_baseline"
 model_type: "transformer"       # 'mlp' or 'transformer'
 
+
 data:
   train_path:   "data/train.npz"
   val_path:     "data/valid.npz"
