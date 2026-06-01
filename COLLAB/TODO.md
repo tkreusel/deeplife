@@ -25,11 +25,17 @@ Tasks for the full team. When you pick up a task, add your name + date next to i
 - [ ] Fix `local_baseline.yaml` + `egnn_local.yaml` to use `data/val.npz` (currently reference `data/valid.npz`)
 - [ ] Delete `scripts/tmp.py` — one-off debugging script, pollutes repo
 
-### Training: improve FlowMatch bond validity
-Bond validity is only 5% after 500 epochs (see STATUS.md). Suggested experiments:
-- [ ] Try higher LR (`lr: 3e-4` instead of `1e-4`) — flow matching is less sensitive than EGNN+DDPM
-- [ ] Try `coord_scale: 16.32` (same as DDPM default) — the current 5.0 may produce velocity targets with the wrong scale
-- [ ] Try more epochs (e.g. 1000) with the current config
+### Training: improve FlowMatch bond validity — physics constraints ready
+Physics module implemented. Run the physics-constrained training:
+```bash
+python scripts/train_flow.py --config configs/flowmatch_physics.yaml
+```
+The log.jsonl will have `phys_bond`, `phys_clash`, `phys_angle` columns.  
+Reference floor (real data): `phys_bond=0.0039`, `phys_clash=0.0`, `phys_angle=0.0298`.
+
+- [ ] **Run full physics-constrained training** (500 epochs) and compare bond validity vs `flowmatch/v2`
+- [ ] If bond validity is still low after 200 epochs, try increasing `physics_weight: 0.1`
+- [ ] Also try higher LR (`lr: 3e-4`) — flow matching is less LR-sensitive than EGNN+DDPM
 - [ ] Try `augment_se3: true` — data augmentation may help the equivariant model generalize
 
 ### Evaluation

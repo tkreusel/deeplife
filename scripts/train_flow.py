@@ -151,8 +151,26 @@ def train(config: dict, resume_path: str = None):
     ).to(device)
     print(f"ZeroCoMFlowMatching  sigma_min={diffusion.sigma_min}")
 
+    # ── Physics constraints (optional) ────────────────────────────────────────
+    tc          = config['training']   # read early; reused below in optimiser block
+    physics     = None
+    phys_weight = tc.get('physics_weight', 0.0)
+    pc          = config.get('physics', {})
+
+    if phys_weight > 0.0 and pc:
+        from models.physics import ChignolinPhysics
+        physics = ChignolinPhysics(
+            bond_weight  = pc.get('bond_weight',  1.0),
+            clash_weight = pc.get('clash_weight', 0.1),
+            angle_weight = pc.get('angle_weight', 0.5),
+            coord_scale  = config['data'].get('coord_scale', 5.0),
+        )
+        print(f"Physics: {physics}  λ={phys_weight}")
+    else:
+        print("Physics: disabled (set training.physics_weight > 0 to enable)")
+
     # ── Optimiser + scheduler ─────────────────────────────────────────────────
-    tc           = config['training']
+    # tc already assigned above (physics block needs it early)
     optimizer    = AdamW(model.parameters(), lr=tc['lr'], weight_decay=1e-4)
     total_steps  = tc['n_epochs'] * len(train_loader)
     warmup_steps = tc.get('warmup_steps', 500)
@@ -213,7 +231,11 @@ def train(config: dict, resume_path: str = None):
             optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
-                loss = diffusion.training_loss(model, x0)
+                loss = diffusion.training_loss(
+                    model, x0,
+                    physics_weight = phys_weight,
+                    physics_fn     = physics,
+                )
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -239,24 +261,50 @@ def train(config: dict, resume_path: str = None):
         epoch_time = time.time() - t0
 
         # ── Validation ────────────────────────────────────────────────────────
-        mean_val = None
+        mean_val    = None
+        phys_log    = {}          # physics breakdown — populated at val epochs
+
         if (epoch + 1) % tc.get('val_every', 10) == 0:
             orig = ema.apply_shadow()
             model.eval()
             val_loss, n_val = 0.0, 0
+            # Accumulators for per-constraint physics breakdown
+            phys_accum: dict = {}
+            n_phys = 0
+
             with torch.no_grad(), torch.amp.autocast("cuda", enabled=use_amp):
                 for batch in val_loader:
                     x0 = batch['coords'].to(device, non_blocking=True)
-                    val_loss += diffusion.training_loss(model, x0).item()
-                    n_val    += 1
+                    val_loss += diffusion.training_loss(
+                        model, x0,
+                        physics_weight = phys_weight,
+                        physics_fn     = physics,
+                    ).item()
+                    n_val += 1
+
+                    # Physics breakdown on clean val data (oracle reference)
+                    if physics is not None:
+                        bd = physics.breakdown(x0)
+                        for k, v in bd.items():
+                            phys_accum[k] = phys_accum.get(k, 0.0) + v
+                        n_phys += 1
+
             mean_val = val_loss / n_val
             ema.restore(orig)
 
+            if physics is not None and n_phys > 0:
+                phys_log = {k: v / n_phys for k, v in phys_accum.items()}
+
             throughput = n_batches * tc['batch_size'] / epoch_time
+            phys_str   = (f"  bond={phys_log.get('phys_bond', 0):.4f}"
+                          f"  clash={phys_log.get('phys_clash', 0):.4f}"
+                          f"  angle={phys_log.get('phys_angle', 0):.4f}"
+                          if phys_log else "")
             print(
                 f"\nEpoch {epoch+1:4d} | "
                 f"train={mean_train:.4f}  val={mean_val:.4f}  "
                 f"time={epoch_time:.0f}s  ({throughput:,.0f} structs/s)"
+                + phys_str
             )
 
             if mean_val < best_val_loss:
@@ -278,6 +326,7 @@ def train(config: dict, resume_path: str = None):
             'global_step':  global_step,
             'train_loss':   mean_train,
             'val_loss':     mean_val,
+            **phys_log,
             'lr':           scheduler.get_last_lr()[0],
             'epoch_time_s': epoch_time,
         })

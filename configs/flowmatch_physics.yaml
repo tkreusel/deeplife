@@ -1,0 +1,53 @@
+experiment_name: "chignolin_flowmatch_physics"
+model_type:      "flowmatch"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── Physics constraints ───────────────────────────────────────────────────────
+# Applied as a t²-weighted penalty on the reconstructed x₁_pred:
+#   L_total = L_flow + physics_weight · E[t² · (bond×L_bond + clash×L_clash + angle×L_angle)]
+#
+# physics_weight = 0.05 means ~5% physics at t=1, scaling to 0% at t=0.
+# Start with 0.05; increase to 0.1 if bond validity plateaus.
+physics:
+  bond_weight:  1.0    # Cα–Cα bond MSE (3.832 Å target) — main failure mode
+  clash_weight: 0.1    # soft repulsion for non-bonded pairs < 3.5 Å
+  angle_weight: 0.5    # Cα–Cα–Cα angle Huber loss (target cos ≈ 0.320)
+
+# ── EGNN velocity network (production size — identical to flowmatch.yaml) ─────
+model:
+  hidden_dim: 128
+  edge_dim:   64
+  n_layers:   5
+  time_dim:   64
+  dropout:    0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     512
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.05   # λ — tune between 0.01 and 0.2; too high hurts flow loss
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_physics"

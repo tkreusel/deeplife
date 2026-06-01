@@ -1,0 +1,54 @@
+experiment_name: "chignolin_flowmatch_physics"
+model_type:      "flowmatch"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── Physics constraints ───────────────────────────────────────────────────────
+# Constraint targets (from training data statistics):
+#   bond_length : 3.832 Å ± 0.062 Å  (nearly rigid — highest weight)
+#   bond_angle  : cos(71.4°) ≈ 0.320  (Huber loss with δ=0.5)
+#   clash       : no non-bonded pair < 3.5 Å
+#
+# weights are multiplied together with physics_weight below:
+#   effective bond loss weight = physics_weight × bond_weight = 0.05 × 1.0
+physics:
+  bond_weight:  1.0    # Cα–Cα consecutive bond length MSE
+  clash_weight: 0.1    # non-bonded soft repulsion (|i-j| ≥ 2)
+  angle_weight: 0.5    # Cα–Cα–Cα virtual bond angle Huber loss
+
+# ── EGNN velocity network (tiny — CPU smoke test) ─────────────────────────────
+model:
+  hidden_dim: 32
+  edge_dim:   16
+  n_layers:   2
+  time_dim:   16
+  dropout:    0.0
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     32
+  lr:             1.0e-4
+  n_epochs:       5
+  warmup_steps:   10
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.05   # λ — scales physics vs flow loss
+  val_every:      1
+  save_every:     5
+  num_workers:    0
+  amp:            false
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_physics"

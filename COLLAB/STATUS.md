@@ -2,7 +2,7 @@
 
 Current state of the codebase, known issues, and run history. **Update this after every significant training run or fix.**
 
-Last updated: 2026-06-01 (final session update)
+Last updated: 2026-06-01 (physics constraints added)
 
 ---
 
@@ -15,8 +15,9 @@ Last updated: 2026-06-01 (final session update)
 | EGNNScoreNetwork | Code complete | SE(3)-equivariant; `check_equivariance()` verified |
 | GaussianDiffusion (DDPM) | Code complete | Cosine + linear schedules |
 | ZeroCoMGaussianDiffusion | Code complete | Used by `train_egnn.py` |
-| ContinuousFlowMatching | Code complete | OT-CFM; Euler ODE sampling |
-| ZeroCoMFlowMatching | Code complete | Zero-CoM OT-CFM; Heun's 2nd-order ODE; used by `train_flow.py` |
+| ContinuousFlowMatching | Code complete | OT-CFM; Euler ODE sampling; physics hook implemented |
+| ZeroCoMFlowMatching | Code complete | Zero-CoM OT-CFM; Heun's ODE; physics t²-weighted; used by `train_flow.py` |
+| ChignolinPhysics (`models/physics.py`) | Code complete | Bond MSE + clash repulsion + angle Huber; coord_scale-aware |
 | DDIM sampling | Code complete | Configurable eta, fewer steps |
 | SE(3) data augmentation | Code complete | `RandomSE3Transform` via QR decomp |
 | Local test configs | Verified | `local_baseline.yaml`, `egnn_local.yaml`, `flowmatch_local.yaml` |
@@ -45,8 +46,13 @@ Loads `data/train.npz` and prints coordinate std. Safe to delete and commit.
 
 ### FlowMatch bond validity is low (5% after 500 epochs)
 The Rg and MMD match the reference well, but bond lengths are too spread (std 0.83 vs 0.06 Å).  
-Likely causes: flow matching may need a higher LR, more epochs, or the `coord_scale` (currently 5.0) may be suboptimal relative to what DDPM was tuned for.  
-**Next steps:** see stretch goals in TODO.md.
+**Physics constraints implemented** (`models/physics.py`, `configs/flowmatch_physics.yaml`):
+- t²-weighted bond length MSE, clash repulsion, virtual bond angle Huber loss
+- Applied to reconstructed x₁_pred during training; zero impact when `physics_weight=0`
+- phys_* columns logged per val epoch in log.jsonl (oracle reference on clean val data)
+- Reference floor: `phys_bond=0.0039`, `phys_clash=0.0`, `phys_angle=0.0298`
+
+**Next step:** run `python scripts/train_flow.py --config configs/flowmatch_physics.yaml`
 
 ---
 

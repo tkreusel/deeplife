@@ -77,18 +77,51 @@ class ContinuousFlowMatching(nn.Module):
 
     # ── Training ──────────────────────────────────────────────────────────────
 
+    def _reconstruct_x1(
+        self, pred: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Reconstruct x₁ from a velocity prediction and noisy x_t.
+
+        From the OT-CFM interpolant  x_t = x₀ + t·v  (see derivation in
+        flow_matching.py module docstring), solving for x₁ gives:
+
+            x₁ = v · α  +  (1 − σ_min) · x_t
+            where  α = 1 − (1 − σ_min) · t
+
+        At t=0: x₁ ≈ pred + x₀  (unreliable; pred is a raw noise prediction)
+        At t=1: x₁ ≈ (1−σ) · x_t ≈ x_t  (reliable; x_t ≈ x₁)
+
+        This estimate is used to apply physics constraints during training.
+        It is clamped to ±5 (normalised units, i.e. ±25 Å) to prevent NaNs
+        from exploding gradients at early training steps.
+        """
+        t_  = t[:, None, None]
+        alpha = 1.0 - (1.0 - self.sigma_min) * t_
+        return (pred * alpha + (1.0 - self.sigma_min) * x_t).clamp(-5.0, 5.0)
+
     def training_loss(
         self,
         model:          nn.Module,
         x1:             torch.Tensor,   # (B, N, 3)  clean structures
         physics_weight: float = 0.0,
-        physics_fn      = None,
+        physics_fn      = None,         # callable: (B,N,3) normalised → (B,) loss
     ) -> torch.Tensor:
         """
-        Flow matching loss for one batch.
+        Flow matching loss for one batch, with optional physics regularisation.
 
         Samples a random t ∈ [0,1] per structure, interpolates to x_t,
         and regresses the predicted velocity toward the analytic target.
+
+        Physics regularisation (when physics_weight > 0 and physics_fn given):
+            Reconstructs x₁_pred from the velocity prediction and applies
+            physics_fn to it. The physics loss is weighted by t² so that it
+            is near-zero at t≈0 (x₁_pred unreliable) and full at t≈1 (x₁_pred
+            converges to the real x₁). Gradient flows back through x₁_pred
+            to the model velocity prediction.
+
+            physics_fn must accept (B, N, 3) normalised coords and return (B,).
+            Use models.physics.ChignolinPhysics for the standard constraints.
         """
         B = x1.shape[0]
 
@@ -100,7 +133,16 @@ class ContinuousFlowMatching(nn.Module):
 
         pred = model(x_t, self._scale_t(t))                      # (B, N, 3)
 
-        return F.mse_loss(pred, target)
+        flow_loss = F.mse_loss(pred, target)
+
+        if physics_weight > 0.0 and physics_fn is not None:
+            x1_pred    = self._reconstruct_x1(pred, x_t, t)      # (B, N, 3)
+            per_sample = physics_fn(x1_pred)                      # (B,)
+            # t²-weight: physics signal only meaningful when x₁_pred is reliable
+            phys_loss  = (t ** 2 * per_sample).mean()
+            flow_loss  = flow_loss + physics_weight * phys_loss
+
+        return flow_loss
 
     # ── Sampling ──────────────────────────────────────────────────────────────
 
@@ -219,7 +261,7 @@ class ZeroCoMFlowMatching(ContinuousFlowMatching):
         model:          nn.Module,
         x1:             torch.Tensor,
         physics_weight: float = 0.0,
-        physics_fn      = None,
+        physics_fn      = None,         # callable: (B,N,3) normalised → (B,) loss
     ) -> torch.Tensor:
         B = x1.shape[0]
 
@@ -231,7 +273,16 @@ class ZeroCoMFlowMatching(ContinuousFlowMatching):
 
         pred = self._remove_com(model(x_t, self._scale_t(t)))
 
-        return F.mse_loss(pred, target)
+        flow_loss = F.mse_loss(pred, target)
+
+        if physics_weight > 0.0 and physics_fn is not None:
+            # Reconstruct x₁_pred and project to zero-CoM subspace
+            x1_pred    = self._remove_com(self._reconstruct_x1(pred, x_t, t))
+            per_sample = physics_fn(x1_pred)                      # (B,)
+            phys_loss  = (t ** 2 * per_sample).mean()
+            flow_loss  = flow_loss + physics_weight * phys_loss
+
+        return flow_loss
 
     # ── Sampling ──────────────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@ Diffusion model framework for generating Chignolin protein Cα conformations. Th
 python scripts/train.py --config configs/local_baseline.yaml
 python scripts/train_egnn.py --config configs/egnn_local.yaml
 python scripts/train_flow.py --config configs/flowmatch_local.yaml
+python scripts/train_flow.py --config configs/flowmatch_physics_local.yaml   # with physics constraints
 ```
 
 ### Full training (GPU)
@@ -22,7 +23,8 @@ python scripts/train_flow.py --config configs/flowmatch_local.yaml
 python scripts/train.py --config configs/baseline.yaml
 python scripts/train_egnn.py --config configs/egnn_personal.yaml  # personal config with local paths
 python scripts/train.py --config configs/baseline.yaml --resume checkpoints/baseline/v1/latest.pt
-python scripts/train_flow.py --config configs/flowmatch.yaml      # SE(3)-equivariant flow matching
+python scripts/train_flow.py --config configs/flowmatch.yaml             # SE(3)-equivariant flow matching
+python scripts/train_flow.py --config configs/flowmatch_physics.yaml     # + bond/angle/clash physics loss
 python scripts/train_flow.py --config configs/flowmatch.yaml --resume checkpoints/flowmatch/v1/epoch_0050.pt
 ```
 
