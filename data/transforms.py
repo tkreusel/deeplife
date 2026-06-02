@@ -3,9 +3,6 @@ data/transforms.py
 ==================
 SE(3) data augmentation for Chignolin Cα training.
 
-Referenced in data/dataset.py (line was commented out):
-    # from utils.transforms import RandomSE3Transform
-
 Set  augment_se3: true  in your config to use this.
 
 Why augment with SE(3)?

@@ -80,6 +80,7 @@ outputs/
 tb_logs/
 tensorboard/
 *.tfevents.*
+*.md
 
 # Generated samples / figures
 samples/

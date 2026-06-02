@@ -90,10 +90,9 @@ def get_dataloaders(config: dict):
         data.coord_scale  (optional, defaults to COORD_SCALE)
         training.batch_size, training.num_workers
     """
-    # from utils.transforms import RandomSE3Transform
+    from data.transforms import get_transform
 
-    # transform = RandomSE3Transform() if config['data'].get('augment_se3', False) else None
-    transform = None
+    transform = get_transform(config)
     scale     = config['data'].get('coord_scale', COORD_SCALE)
 
     train_ds = ChignolinDataset(config['data']['train_path'],
