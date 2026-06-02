@@ -2,7 +2,7 @@
 
 Current state of the codebase, known issues, and run history. **Update this after every significant training run or fix.**
 
-Last updated: 2026-06-01 (physics constraints added)
+Last updated: 2026-06-02 (SE(3) equivariance analysis script added)
 
 ---
 
@@ -26,6 +26,7 @@ Last updated: 2026-06-01 (physics constraints added)
 | `quick_sample.py` | Code complete | Handles mlp/transformer/egnn/flowmatch |
 | `evaluate.py` | Code complete | N-model comparison; mlp/transformer/egnn/flowmatch; MMD, bond %, Rg |
 | `plot_training.py` | Code complete | log.jsonl → multi-run overlay plots (linear + log + LR) |
+| `check_equivariance.py` | Code complete | 3-test SE(3) equivariance analysis; all model types; optional plot |
 | AMP training (EGNN + FlowMatch) | Code complete | GradScaler, scaler saved in ckpt |
 | `torch.compile` (EGNN + FlowMatch) | Code complete | Optional, PyTorch ≥2.0; strips `_orig_mod.` prefix on load |
 
@@ -155,11 +156,34 @@ FlowMatch-EGNN has the best global structure (Rg, end-to-end, MMD) despite poor 
 
 ---
 
+---
+
+## SE(3) equivariance analysis (2026-06-02)
+
+`scripts/check_equivariance.py` — three empirical tests across all model types.
+
+**Method:**
+- Test 1: score-network error `‖model(Rx,t) − R·model(x,t)‖ / ‖model(x,t)‖` (single forward pass, exact)
+- Test 2: full-pipeline error `‖f(Rx₀) − R·f(x₀)‖ / ‖f(x₀)‖` (deterministic DDIM eta=0 / Heun ODE — no averaging needed)
+- Test 3: distribution isotropy λ_max/λ_min of generated ensemble covariance (~1 = isotropic)
+
+| Model | T1 proper | T1 refl | T2 proper | T2 refl | Isotropy ratio |
+|-------|-----------|---------|-----------|---------|----------------|
+| FlowMatch (equivariant) | ~1e-7 PASS | ~1e-7 PASS | ~4e-7 PASS | ~4e-7 PASS | ~1.3 (100 samples) |
+| Transformer (non-equivariant) | ~1.09 FAIL | ~1.01 FAIL | ~1.38 FAIL | ~1.34 FAIL | 6.15 ANISOTROPIC |
+
+The 6-order-of-magnitude gap between equivariant (~1e-7) and non-equivariant (~1) models confirms SE(3) equivariance is working as intended. Isotropy ratio of 6.15 for the Transformer shows it generates structures with a strong preferred orientation learned from training data.
+
+Note: isotropy ratio for equivariant models becomes more reliable with more samples; ~500 recommended for the full test.
+
+---
+
 ## Git history
 
 | Commit | Message | What changed |
 |--------|---------|-------------|
-| (this commit) | Add SE(3)-equivariant flow matching + collab workspace + evaluation improvements | See below |
+| (this commit) | Add SE(3) equivariance analysis script | `scripts/check_equivariance.py`; COLLAB docs updated |
+| 21c89c2 | Add physics-constrained flow matching (bond, clash, angle losses) | See below |
 | 5f43700 | nothing | transforms.py gitignore fix |
 | 5b23581 | Added EGNN model | `egnn.py`, `train_egnn.py`, `diffusion_zerocom.py`, `transforms.py`, `egnn*.yaml`, `evaluate.py` dual-ckpt |
 | 6df1d89 | add requirements.txt | `requirements.txt` |

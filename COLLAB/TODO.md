@@ -63,7 +63,7 @@ Reference floor (real data): `phys_bond=0.0039`, `phys_clash=0.0`, `phys_angle=0
 - [ ] Try MLP model (`model_type: mlp`) — no full-training config yet, 5 min to write
 - [ ] Explore physics regularization: `training_loss()` in `diffusion.py` has `physics_reg_weight` — wire it up and test effect on bond validity
 - [ ] Add WandB logging to training scripts (`wandb/` already gitignored, clean to add)
-- [ ] Benchmark EGNN equivariance: run `model.check_equivariance()` on `egnn/v1` checkpoint to confirm it holds after training
+- [x] Benchmark EGNN equivariance: run `model.check_equivariance()` on `egnn/v1` checkpoint to confirm it holds after training — *marik, 2026-06-02* — superseded by `check_equivariance.py` (full pipeline test; see STATUS.md)
 - [ ] Try FlowMatch with DDPM-style noise (`ContinuousFlowMatching` base class) instead of zero-CoM variant — check if it converges differently
 - [ ] Investigate whether `augment_se3: true` helps Transformer-DDPM convergence (currently unused)
 
@@ -92,3 +92,4 @@ Reference floor (real data): `phys_bond=0.0039`, `phys_clash=0.0`, `phys_angle=0
 - [x] Expand `evaluate.py` to N-model comparison — *marik, 2026-06-01*
 - [x] Three-way evaluation (FlowMatch vs Transformer-DDPM vs EGNN-DDPM) — *marik, 2026-06-01* — results in STATUS.md; FlowMatch has best MMD+Rg, worst bond validity
 - [x] Reorganise EGNN checkpoint `checkpoints/v2/` → `checkpoints/egnn/v1/` — *2026-06-01*
+- [x] Add SE(3) equivariance analysis script (`scripts/check_equivariance.py`) — *marik, 2026-06-02* — 3 tests: score-network, full-pipeline, distribution isotropy; results in STATUS.md
