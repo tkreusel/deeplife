@@ -33,4 +33,4 @@ training:
   num_workers:  4
 
 paths:
-  checkpoint_dir: "checkpoints/baseline"
+  checkpoint_dir: "checkpoints/baseline_transformed"

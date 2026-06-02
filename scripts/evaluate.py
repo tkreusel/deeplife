@@ -124,6 +124,25 @@ def load_model_from_ckpt(ckpt_path: str, device: str):
         fc        = config.get('flow', {})
         diffusion = ZeroCoMFlowMatching(sigma_min=fc.get('sigma_min', 1e-4))
 
+    elif mt == 'flowmatch_energy':
+        from models.egnn_energy   import EGNNEnergyScoreNetwork
+        from models.flow_matching import ZeroCoMFlowMatching
+        mc    = config['model']
+        model = EGNNEnergyScoreNetwork(
+            n_residues       = config['data']['n_residues'],
+            node_dim         = mc['hidden_dim'],
+            edge_dim         = mc.get('edge_dim', 64),
+            time_dim         = mc['time_dim'],
+            n_layers         = mc['n_layers'],
+            energy_dim       = mc.get('energy_dim', 32),
+            energy_drop_prob = mc.get('energy_drop_prob', 0.15),
+        )
+        fc        = config.get('flow', {})
+        diffusion = ZeroCoMFlowMatching(sigma_min=fc.get('sigma_min', 1e-4))
+        # Note: generate() calls diffusion.ddim_sample(model, ...) which calls
+        # model(x, t) — energy_z defaults to None (unconditional/average).
+        # Use analyze_energy_conditioning.py for temperature-conditioned generation.
+
     else:
         raise ValueError(f"Unknown model_type: {mt!r}")
 

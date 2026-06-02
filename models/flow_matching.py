@@ -240,6 +240,10 @@ class ZeroCoMFlowMatching(ContinuousFlowMatching):
         - EGNN is equivariant: v(Rx+b, t) = R·v(x, t)
         - Zero-CoM noise is translation-invariant
         → generated distribution p(x) is SE(3)-invariant
+
+    Energy-conditioned extensions (for EGNNEnergyScoreNetwork):
+        training_loss_energy()  — pass z-normalised energy per structure
+        ddim_sample_cfg()       — Heun ODE with CFG guidance at given temperature
     """
 
     # ── Zero-CoM helpers ──────────────────────────────────────────────────────
@@ -341,6 +345,114 @@ class ZeroCoMFlowMatching(ContinuousFlowMatching):
                 v2 = self._remove_com(model(x_pred, t_next))
                 if guidance_fn is not None:
                     v2 = v2 + guidance_scale * self._remove_com(guidance_fn(x_pred))
+                x = x + dt * (v1 + v2) * 0.5
+            else:
+                x = x_pred
+
+        return x
+
+    # ── Energy-conditioned extensions ─────────────────────────────────────────
+
+    def training_loss_energy(
+        self,
+        model:          nn.Module,
+        x1:             torch.Tensor,   # (B, N, 3)  clean structures
+        energy_z:       torch.Tensor,   # (B,)       z-score normalised energy
+        physics_weight: float = 0.0,
+        physics_fn      = None,
+    ) -> torch.Tensor:
+        """
+        Flow matching loss with energy conditioning.
+
+        Identical to training_loss() except the model receives energy_z
+        per structure.  CFG dropout is handled inside the model's forward()
+        via its energy_drop_prob parameter — no extra logic needed here.
+
+        energy_z : (B,) z-score normalised energy values
+                   Normalisation: e_z = (E_raw - E_mean) / E_std
+                   Compute E_mean / E_std from the training set once and
+                   pass pre-normalised values at every step.
+        """
+        B = x1.shape[0]
+
+        t  = torch.rand(B, device=x1.device)
+        x0 = self._sample_noise(x1.shape, x1.device)
+
+        x_t    = self._remove_com(self._interpolate(x0, x1, t))
+        target = self._remove_com(self._target_velocity(x0, x1))
+
+        pred = self._remove_com(model(x_t, self._scale_t(t), energy_z=energy_z))
+
+        flow_loss = F.mse_loss(pred, target)
+
+        if physics_weight > 0.0 and physics_fn is not None:
+            x1_pred   = self._remove_com(self._reconstruct_x1(pred, x_t, t))
+            phys_loss = (t ** 2 * physics_fn(x1_pred)).mean()
+            flow_loss = flow_loss + physics_weight * phys_loss
+
+        return flow_loss
+
+    @torch.no_grad()
+    def ddim_sample_cfg(
+        self,
+        model:           nn.Module,
+        shape:           tuple,
+        device           = 'cuda',
+        ddim_steps:      int   = 100,
+        tau:             float = 0.5,
+        guidance_scale:  float = 2.0,
+    ) -> torch.Tensor:
+        """
+        Heun's ODE with temperature-controlled CFG guidance.
+
+        tau            : float ∈ [0, 1]
+                         0 = stable / folded  (low energy,  compact)
+                         1 = transient / extended (high energy, unfolded)
+        guidance_scale : CFG weight w
+                         1.0  → pure conditional (no amplification, single pass)
+                         >1.0 → amplified conditioning (two passes per step)
+                         0.0  → unconditional
+
+        The energy value fed to the model is:
+            e_z = 4 * tau - 2   (spans ±2σ of the training distribution)
+
+        When guidance_scale > 1, each ODE step makes two model evaluations:
+            v1_uncond = model(x, t, energy_z=None)
+            v1_cond   = model(x, t, energy_z=e_tensor)
+            v1 = v1_uncond + guidance_scale * (v1_cond - v1_uncond)
+        When guidance_scale == 1.0, only the conditional pass is run.
+        """
+        B   = shape[0]
+        e_z = 4.0 * tau - 2.0
+        e_t = torch.full((B,), e_z, device=device)   # (B,) broadcast-ready
+
+        x  = self._sample_noise(shape, device)
+        dt = 1.0 / ddim_steps
+        use_cfg = guidance_scale != 1.0
+
+        for i in range(ddim_steps):
+            t_val = i / ddim_steps
+            t     = torch.full((B,), self._scale_t(t_val), device=device)
+
+            # ── Euler predictor ──────────────────────────────────────────
+            v1_cond = self._remove_com(model(x, t, energy_z=e_t))
+            if use_cfg:
+                v1_unc = self._remove_com(model(x, t, energy_z=None))
+                v1 = v1_unc + guidance_scale * (v1_cond - v1_unc)
+            else:
+                v1 = v1_cond
+
+            x_pred = x + dt * v1
+
+            # ── Heun's corrector (skip on last step) ─────────────────────
+            if i < ddim_steps - 1:
+                t_next = torch.full((B,), self._scale_t(t_val + dt), device=device)
+                v2_cond = self._remove_com(model(x_pred, t_next, energy_z=e_t))
+                if use_cfg:
+                    v2_unc = self._remove_com(model(x_pred, t_next, energy_z=None))
+                    v2 = v2_unc + guidance_scale * (v2_cond - v2_unc)
+                else:
+                    v2 = v2_cond
                 x = x + dt * (v1 + v2) * 0.5
             else:
                 x = x_pred

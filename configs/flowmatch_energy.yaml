@@ -1,0 +1,45 @@
+experiment_name: "chignolin_flowmatch_energy"
+model_type:      "flowmatch_energy"    # SE(3) flow matching + energy conditioning (CFG)
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+  # energy_mean / energy_std are computed at runtime from the training set
+  # and stored here by train_flow_energy.py for reproducibility.
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── EGNN velocity network with energy conditioning ────────────────────────────
+model:
+  hidden_dim:       128     # node feature dimension
+  edge_dim:         64      # edge feature dimension
+  n_layers:         5       # number of EGNN message-passing layers
+  time_dim:         64      # sinusoidal timestep embedding dimension
+  energy_dim:       32      # energy embedding dimension (new)
+  energy_drop_prob: 0.15    # CFG dropout probability (new)
+  dropout:          0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   512
+  lr:           1.0e-4
+  n_epochs:     500
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true
+  compile:      true
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_energy"

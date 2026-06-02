@@ -1,0 +1,50 @@
+experiment_name: "chignolin_flowmatch_energy_physics"
+model_type:      "flowmatch_energy"    # SE(3) flow matching + energy conditioning (CFG)
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── EGNN velocity network with energy conditioning ────────────────────────────
+model:
+  hidden_dim:       128
+  edge_dim:         64
+  n_layers:         5
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  dropout:          0.1
+
+# ── Physics constraints ───────────────────────────────────────────────────────
+physics:
+  bond_weight:  1.0   # Cα–Cα bond length MSE (target 3.832 Å)
+  clash_weight: 0.1   # soft repulsion for non-bonded pairs < 3.5 Å
+  angle_weight: 0.5   # Cα–Cα–Cα virtual bond angle Huber loss
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:    512
+  lr:            1.0e-4
+  n_epochs:      500
+  warmup_steps:  1000
+  grad_clip:     1.0
+  ema_decay:     0.9999
+  val_every:     10
+  save_every:    50
+  num_workers:   4
+  amp:           true
+  compile:       true
+  physics_weight: 0.05   # λ — scales physics loss relative to flow loss
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_energy_physics"
