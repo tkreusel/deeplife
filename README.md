@@ -4,10 +4,15 @@ Project for the master seminar DeepLife - AI Methods for Advanced Molecular Mode
 
 Generative models for sampling Chignolin protein backbone conformations — comparing Cartesian DDPM, SE(3)-equivariant flow matching, and torsion-space representations across 24 trained variants.
 
+### [Final presentation](2026-06-05_Project-presentation.pdf)
+
+
+
 ---
 
 ## Models
 
+[Full model registry](MODEL_REGISTRY.md)
 | Model | Architecture |
 |---|---|
 | Transformer-DDPM | Transformer + DDPM, Cα |
@@ -48,4 +53,4 @@ plots/
   model_evals/     per-model and comparison plots
 ```
 
-Full model registry: [MODEL_REGISTRY.md]
+
