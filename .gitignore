@@ -1,6 +1,7 @@
 # ─── Project-specific ────────────────────────────────────────────────────────
 .claude/
 COLLAB/
+CLAUDE.md
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
@@ -84,7 +85,7 @@ outputs/
 tb_logs/
 tensorboard/
 *.tfevents.*
-*.md
+
 
 # Generated samples / figures
 samples/
