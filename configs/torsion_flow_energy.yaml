@@ -1,0 +1,42 @@
+experiment_name: "chignolin_torsion_flow_energy"
+model_type:      "torsion_flow_energy"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  coord_scale: 5.0       # used for loading/centering Cartesian data; internal
+                          # coords are then computed in Å (x * coord_scale)
+  augment_se3: false      # not needed: internal coords are already SE(3)-invariant
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── TorsionFlowNet (MLP velocity network) ─────────────────────────────────────
+model:
+  hidden_dim:       256
+  n_layers:         4
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   512
+  lr:           3.0e-4
+  n_epochs:     500
+  warmup_steps: 500
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true
+  compile:      true
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/torsion_flow"

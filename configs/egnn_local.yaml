@@ -7,6 +7,7 @@ data:
   test_path:   "data/test.npz"
   n_residues:  10
   augment_se3: false
+  coord_scale: 5.0
 
 diffusion:
   T:        50
@@ -19,16 +20,22 @@ model:
   time_dim:   32
   dropout:    0.1
 
+physics:
+  bond_weight:  1.0
+  clash_weight: 0.1
+  angle_weight: 0.5
+
 training:
-  batch_size:   8
-  lr:           1.0e-4
-  n_epochs:     5
-  warmup_steps: 10
-  grad_clip:    1.0
-  ema_decay:    0.9999
-  val_every:    1
-  save_every:   5
-  num_workers:  0
+  batch_size:     8
+  lr:             1.0e-4
+  n_epochs:       5
+  warmup_steps:   10
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.05
+  val_every:      1
+  save_every:     5
+  num_workers:    0
 
 paths:
   checkpoint_dir: "checkpoints/egnn_local"

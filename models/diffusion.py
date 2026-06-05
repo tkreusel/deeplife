@@ -105,6 +105,7 @@ class GaussianDiffusion(nn.Module):
         x0:             torch.Tensor,       # (B, N, 3)  clean structures
         physics_weight: float = 0.0,
         physics_fn      = None,             # callable(x_pred) → scalar
+        model_kwargs:   dict  = None,       # extra kwargs forwarded to model (e.g. energy_z)
     ) -> torch.Tensor:
         """
         Compute the diffusion training loss for one batch.
@@ -119,15 +120,20 @@ class GaussianDiffusion(nn.Module):
         x_t, noise = self.q_sample(x0, t)
 
         # 3. ask the network to predict the noise
-        noise_pred = model(x_t, t)          # (B, N, 3)
+        noise_pred = model(x_t, t, **(model_kwargs or {}))      # (B, N, 3)
 
         # 4. simple MSE between true and predicted noise
         loss = (noise - noise_pred).pow(2).mean()
 
         # 5. optional physics regularisation
+        # Weighted by α̅_t (alphas_cumprod): high at low noise (t≈0, x0_pred reliable)
+        # and near zero at high noise (t≈T, x0_pred is garbage).
+        # This is the DDPM equivalent of the t²-weighting used in flow matching.
         if physics_weight > 0.0 and physics_fn is not None:
             x0_pred = self._predict_x0_from_noise(x_t, t, noise_pred)
-            loss = loss + physics_weight * physics_fn(x0_pred)
+            phys_per_sample = physics_fn(x0_pred)           # (B,)
+            snr_weight      = self.alphas_cumprod[t]        # (B,) ∈ [0,1]
+            loss = loss + physics_weight * (snr_weight * phys_per_sample).mean()
 
         return loss
     
@@ -243,6 +249,61 @@ class GaussianDiffusion(nn.Module):
                              * (1 - alpha_t / alpha_prev)).sqrt()
             dir_xt  = (1 - alpha_prev - sigma ** 2).sqrt() * noise_pred
             noise   = torch.randn_like(x) if t_prev > 0 else 0
+
+            x = alpha_prev.sqrt() * x0_pred + dir_xt + sigma * noise
+
+        return x
+
+    @torch.no_grad()
+    def ddim_sample_sc(
+        self,
+        model,
+        shape:          tuple,
+        device:         str   = 'cuda',
+        ddim_steps:     int   = 50,
+        eta:            float = 0.0,
+        energy_z              = None,
+        guidance_scale: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        DDIM sampling with self-conditioning.
+
+        At each step the x₀ prediction is passed back as x0_self_cond for
+        the next step (starts as zeros at t=T).
+
+        Optional CFG: when energy_z is provided and guidance_scale != 1.0 the
+        model is called twice per step (conditioned + unconditional) and the
+        predictions are blended before the DDIM update.
+        """
+        step_size = self.T // ddim_steps
+        timesteps = list(range(0, self.T, step_size))[::-1]
+
+        x     = torch.randn(shape, device=device)
+        x0_sc = torch.zeros_like(x)          # self-conditioning starts at zero
+
+        for i, t in enumerate(timesteps):
+            t_tensor   = torch.full((shape[0],), t, device=device, dtype=torch.long)
+            t_prev     = timesteps[i + 1] if i + 1 < len(timesteps) else 0
+            alpha_t    = self.alphas_cumprod[t]
+            alpha_prev = self.alphas_cumprod[t_prev]
+
+            # CFG: blend conditioned and unconditional predictions
+            if energy_z is not None and guidance_scale != 1.0:
+                eps_cond   = model(x, t_tensor, energy_z=energy_z, x0_self_cond=x0_sc)
+                eps_uncond = model(x, t_tensor, energy_z=None,     x0_self_cond=x0_sc)
+                noise_pred = eps_uncond + guidance_scale * (eps_cond - eps_uncond)
+            else:
+                noise_pred = model(x, t_tensor, energy_z=energy_z, x0_self_cond=x0_sc)
+
+            # x₀ prediction — used for DDIM update AND as self-conditioning next step
+            x0_pred = (x - (1 - alpha_t).sqrt() * noise_pred) / alpha_t.sqrt()
+            x0_pred = x0_pred.clamp(-5, 5)
+            x0_sc   = x0_pred                   # carry forward to next step
+
+            sigma  = eta * ((1 - alpha_prev) / (1 - alpha_t)
+                            * (1 - alpha_t / alpha_prev)).sqrt()
+            dir_xt = (1 - alpha_prev - sigma ** 2).sqrt() * noise_pred
+            noise  = torch.randn_like(x) if t_prev > 0 else 0
 
             x = alpha_prev.sqrt() * x0_pred + dir_xt + sigma * noise
 

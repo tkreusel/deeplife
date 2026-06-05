@@ -49,9 +49,9 @@ class ChignolinDataset(Dataset):
             self.centroids = self.centroids.unsqueeze(1)
 
         assert self.coords.ndim == 3, \
-            f"Expected coords shape (N, 10, 3), got {self.coords.shape}"
-        assert self.coords.shape[1:] == (10, 3), \
-            f"Expected 10 residues with 3 coords each, got {self.coords.shape[1:]}"
+            f"Expected coords shape (N, n_atoms, 3), got {self.coords.shape}"
+        assert self.coords.shape[2] == 3, \
+            f"Expected 3D coordinates, got {self.coords.shape[2]}D"
         assert len(self.coords) == len(self.energies) == len(self.centroids), \
             "coords, energies and centroids must have the same length"
 

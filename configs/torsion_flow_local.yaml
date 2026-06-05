@@ -1,0 +1,44 @@
+experiment_name: "chignolin_torsion_flow_local"
+model_type:      "torsion_flow_energy"
+
+# CPU sanity-check config — runs in ~1 min with 5 epochs.
+# Usage: python scripts/train_torsion.py --config configs/torsion_flow_local.yaml
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  coord_scale: 5.0
+  augment_se3: false
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+model:
+  hidden_dim:       128
+  n_layers:         2
+  time_dim:         32
+  energy_dim:       16
+  energy_drop_prob: 0.15
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   64
+  lr:           3.0e-4
+  n_epochs:     5
+  warmup_steps: 50
+  grad_clip:    1.0
+  ema_decay:    0.999
+  val_every:    1
+  save_every:   5
+  num_workers:  0
+  amp:          false
+  compile:      false
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/torsion_flow_local"

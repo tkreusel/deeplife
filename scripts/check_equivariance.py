@@ -432,7 +432,7 @@ def plot_summary(results_dict: dict, save_path: str):
 
     labels   = list(results_dict.keys())
     n_models = len(labels)
-    colors   = ['#C44E52', '#4C72B0', '#55A868', '#8172B3', '#CCB974']
+    colors   = ['#C44E52', '#4C72B0', '#55A868', '#8172B3', '#CCB974', '#64B5CD']
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     fig.suptitle("SE(3) Equivariance Analysis", fontsize=13, y=1.01)

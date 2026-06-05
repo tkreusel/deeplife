@@ -1,0 +1,51 @@
+experiment_name: "chignolin_backbone_ipa_distill"
+model_type:      "backbone_ipa_energy"
+
+data:
+  train_path:  "data_backbone/train.npz"
+  val_path:    "data_backbone/val.npz"
+  test_path:   "data_backbone/test.npz"
+  n_residues:  10
+  coord_scale: 3.42
+  augment_se3: false
+
+flow:
+  sigma_min:        1.0e-4
+  phi_source_dist:  "data"
+  psi_source_dist:  "data"
+  cart_weight:      0.1        # keep Cartesian loss active
+  cosine_T0:        50         # shorter restarts for fine-tuning
+  cosine_T_mult:    1          # constant period (no expansion)
+  # Self-distillation: ON
+  self_distill:        true
+  self_distill_steps:  5       # k Euler steps for teacher rollout
+  self_distill_weight: 0.5     # weight of distillation loss term
+
+model:
+  d_model:          256
+  n_heads:          8
+  n_layers:         6
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  dropout:          0.1
+  n_rbf:            16
+  sep_dim:          4
+  rbf_dmax:         18.0
+  ff_mult:          2
+
+training:
+  batch_size:   512
+  lr:           3.0e-5         # lower LR for fine-tuning (3× reduction from base)
+  n_epochs:     500            # shorter — distillation converges faster
+  warmup_steps: 100            # short warmup since weights are already good
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true
+  compile:      true
+
+paths:
+  checkpoint_dir: "checkpoints/backbone_ipa"   # auto-creates v2/ next to v1/

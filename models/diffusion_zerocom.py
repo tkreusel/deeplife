@@ -222,3 +222,62 @@ class ZeroCoMGaussianDiffusion(GaussianDiffusion):
             x = alpha_prev.sqrt() * x0_pred + dir_xt + sigma * noise
 
         return x
+
+    # ── Self-conditioning DDIM (for AdaLNSCScoreNetwork) ─────────────────────
+
+    @torch.no_grad()
+    def ddim_sample_sc(
+        self,
+        model,
+        shape:          tuple,
+        device:         str   = 'cuda',
+        ddim_steps:     int   = 50,
+        eta:            float = 0.0,
+        energy_z:       Tensor = None,
+        guidance_scale: float = 1.0,
+    ) -> Tensor:
+        """
+        DDIM sampling with self-conditioning and optional CFG.
+
+        At each step the x₀ prediction is passed back to the model as
+        x0_self_cond for the next step (starts as zeros at t=T).
+
+        CFG: if energy_z is provided and guidance_scale > 1, the model is
+        called twice per step (conditioned + unconditional) and predictions
+        are blended before the DDIM update.
+        """
+        step_size = self.T // ddim_steps
+        timesteps = list(range(0, self.T, step_size))[::-1]
+
+        x       = self._zero_com_noise(shape, device)
+        x0_sc   = torch.zeros_like(x)          # self-conditioning starts at zero
+
+        for i, t in enumerate(timesteps):
+            t_tensor   = torch.full((shape[0],), t, device=device, dtype=torch.long)
+            t_prev     = timesteps[i + 1] if i + 1 < len(timesteps) else 0
+            alpha_t    = self.alphas_cumprod[t]
+            alpha_prev = self.alphas_cumprod[t_prev]
+
+            # CFG: blend conditioned and unconditional noise predictions
+            if energy_z is not None and guidance_scale != 1.0:
+                eps_cond   = model(x, t_tensor, energy_z=energy_z,  x0_self_cond=x0_sc)
+                eps_uncond = model(x, t_tensor, energy_z=None,      x0_self_cond=x0_sc)
+                noise_pred = eps_uncond + guidance_scale * (eps_cond - eps_uncond)
+            else:
+                noise_pred = model(x, t_tensor, energy_z=energy_z,  x0_self_cond=x0_sc)
+
+            noise_pred = self._remove_com(noise_pred)
+
+            # x₀ prediction — used for DDIM update AND next self-conditioning
+            x0_pred = (x - (1 - alpha_t).sqrt() * noise_pred) / alpha_t.sqrt()
+            x0_pred = self._remove_com(x0_pred.clamp(-5, 5))
+            x0_sc   = x0_pred                   # carry forward to next step
+
+            sigma  = eta * ((1 - alpha_prev) / (1 - alpha_t)
+                            * (1 - alpha_t / alpha_prev)).sqrt()
+            dir_xt = (1 - alpha_prev - sigma ** 2).sqrt() * noise_pred
+            noise  = self._zero_com_noise(x.shape, device) if t_prev > 0 else 0
+
+            x = alpha_prev.sqrt() * x0_pred + dir_xt + sigma * noise
+
+        return x

@@ -1,0 +1,54 @@
+experiment_name: "chignolin_se3flow_energy_finetune"
+model_type:      "se3flow_energy"
+
+# ── Data (identical to pre-training) ──────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── Model (must match velocity pre-training checkpoint exactly) ───────────────
+model:
+  hidden_dim:       192
+  edge_dim:         96
+  n_layers:         7
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  n_rbf:            16
+  sep_dim:          4
+  dropout:          0.1
+  x1_pred:          true    # activates the zero-init equivariant x1 head
+
+# ── Physics: stronger now that x1_pred = x_in at init (safe) ─────────────────
+physics:
+  bond_weight:  2.0
+  clash_weight: 0.1
+  angle_weight: 0.5
+
+# ── Fine-tuning training ──────────────────────────────────────────────────────
+training:
+  finetune:       true    # load weights only; reset optimizer/epoch
+  batch_size:     512
+  lr:             5.0e-5  # slightly higher than before — v4 only 49 epochs of pre-train
+  n_epochs:       500     # full run; x1_head needs time to learn from partial velocity base
+  warmup_steps:   200
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.15    # linear-t weighted; effective 0.075 — 1.5× velocity-mode effective weight
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/se3flow_energy_finetune"

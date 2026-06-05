@@ -1,0 +1,52 @@
+experiment_name: "chignolin_torsion_transformer_energy"
+model_type:      "torsion_transformer_energy"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  coord_scale: 5.0       # used for loading/centering Cartesian data; internal
+                          # coords are computed in Å (x * coord_scale)
+  augment_se3: false      # not needed: internal coords are already SE(3)-invariant
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min:       1.0e-4
+  theta_source_std: 0.403      # = sqrt(sigma_theta_data^2 + 0.30^2) ≈ empirical;
+                                #   matches training-set θ std so source ≈ target width
+  phi_source_dist: "data"      # "data": WrappedNormal source with per-dihedral σ
+                                # "uniform" (default): Uniform(−π, π) source
+
+  # Cosine annealing with warm restarts (for transformer capacity)
+  cosine_T0:    100             # first restart after 100 epochs
+  cosine_T_mult: 2              # double the period after each restart
+
+# ── TorsionTransformerNet (Transformer velocity network) ──────────────────────
+model:
+  d_model:         256
+  n_heads:         4
+  n_layers:        6
+  time_dim:        64
+  energy_dim:      32
+  energy_drop_prob: 0.15
+  dropout:         0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:   512
+  lr:           1.0e-4         # lower than MLP: Transformer benefits from warmup
+  n_epochs:     2000
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true
+  compile:      true
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/torsion_transformer"

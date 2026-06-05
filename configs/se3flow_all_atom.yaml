@@ -1,0 +1,55 @@
+experiment_name: "chignolin_se3flow_all_atom"
+model_type:      "se3flow_energy"
+
+# ── All-atom data (93 heavy atoms per structure) ──────────────────────────────
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/val.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93                  # all heavy atoms (backbone + side-chains)
+  augment_se3: false
+  coord_scale: 16.32               # all-atom coordinate std (vs 5.0 for Cα-only)
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── SE3FlowEnergyNet ─────────────────────────────────────────────────────────
+# Same architecture as Cα model — SE3FlowLayer is fully general (any n_residues).
+# n_residues=93 means sep_embed has 93 entries instead of 10; otherwise identical.
+model:
+  hidden_dim:       192
+  edge_dim:         96
+  n_layers:         5              # reduced from 7: N=93 → O(N²) memory; 5 layers sufficient
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  n_rbf:            16
+  sep_dim:          4
+  dropout:          0.1
+  x1_pred:          false
+
+# ── All-atom physics (auto-selected by train_flow_energy.py when n_residues != 10) ──
+# AllAtomPhysics: 64 data-derived covalent bonds + heavy-atom clash (2.5 Å cutoff)
+physics:
+  bond_weight:  2.0    # per-bond MSE against data-derived targets (64 bond types)
+  clash_weight: 0.1    # heavy-atom clash repulsion
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     64               # reduced from 512: N=93 → ~8556 edges/structure
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.15
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/se3flow_all_atom"

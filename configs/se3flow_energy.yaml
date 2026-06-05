@@ -1,0 +1,53 @@
+experiment_name: "chignolin_se3flow_energy"
+model_type:      "se3flow_energy"   # SE(3)-equivariant flow matching + energy CFG
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── SE3FlowEnergyNet velocity network ─────────────────────────────────────────
+model:
+  hidden_dim:       192     # up from 128 in EGNNEnergyScoreNetwork
+  edge_dim:         96      # up from 64
+  n_layers:         7       # up from 5
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  n_rbf:            16      # RBF distance features: 16 Gaussians, 0.5–15.5 Å, σ=0.5 Å
+  sep_dim:          4       # sequence-separation embedding dim
+  dropout:          0.1
+  x1_pred:          false   # velocity mode — x1_pred amplifies coordinates through 7 layers at AdaLN init
+
+# ── Physics constraints ───────────────────────────────────────────────────────
+physics:
+  bond_weight:  2.0    # doubled: bond validity is the primary weakness
+  clash_weight: 0.1
+  angle_weight: 0.5
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     512
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.15    # t²-weighted velocity mode; effective 0.05 — same as original v1
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/se3flow_energy"

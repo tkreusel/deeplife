@@ -85,19 +85,50 @@ The diffusion pipeline is: `ChignolinDataset` → `GaussianDiffusion` wrapping a
 
 **Always use `best.pt` for generation** (EMA weights, best val loss), not `latest.pt` (last epoch, raw weights).
 
-**`scripts/tmp.py`** is a one-off debugging script (prints coordinate std). Ignore it.
-
 **Gitignored — do not commit:** `checkpoints/`, `*.pt`, `*.npz`, `*.npy`, `plots/`, `samples/`, `*.pdb`.
 
 ---
 
-## Before starting work
+## Session protocol (automatic)
 
-```bash
-git pull
-# Then read:
-# COLLAB/STATUS.md  — known issues and run history
-# COLLAB/TODO.md    — open tasks (avoid duplicating effort)
+**At the start of every session**, `COLLAB/STATUS.md` and `COLLAB/TODO.md` are automatically injected into your context via a `UserPromptSubmit` hook. You do not need to read them manually — act on their contents immediately (check for open blockers, ongoing work, known issues).
+
+**After every significant action** (training run, bug fix, new script, evaluation), you MUST update these files before the conversation ends:
+- `COLLAB/STATUS.md` — add a run-history entry or update the known-issues section
+- `COLLAB/TODO.md` — mark completed tasks `[x]`, claim in-progress tasks with your name + date, add new tasks
+- `MODEL_REGISTRY.yaml` + `MODEL_REGISTRY.md` — add or update the model entry whenever a training run completes or is meaningfully advanced (≥100 epochs); fill in `eval_metrics` after running `evaluate.py`
+
+Do not wait to be asked. These files are how the team stays in sync across sessions and across teammates.
+
+### Model registry update rules
+
+**Add a new entry** when:
+- A new training run starts (status: `in_progress`, fill in architecture + target_epochs)
+- A run completes or is cancelled after ≥100 epochs (update epochs_run, best_val_loss, status)
+- Evaluation metrics are computed (fill in eval_metrics block)
+
+**Template** (copy to bottom of `MODEL_REGISTRY.yaml` models list):
+```yaml
+  - id: <family>/<version>
+    name: <ShortDescriptiveName>
+    family: <checkpoint_dir_name>
+    version: <v1|v2|...>
+    model_type: <from config>
+    framework: <ddpm|flow_match|torsion_flow|backbone_ipa>
+    data: <ca_only|all_atom|backbone|backbone_torsion|torsion_ca>
+    description: >
+      One sentence describing what is new/different about this run.
+    architecture:
+      hidden_dim: <int>
+      n_layers: <int>
+    training:
+      epochs_run: <int>
+      target_epochs: <int>
+      best_val_loss: <float>
+    checkpoint: checkpoints/<family>/<version>/best.pt
+    eval_metrics: null   # fill in after evaluate.py
+    status: <production|partial|smoke_test|failed|in_progress>
+    notes: ""
 ```
 
-After finishing: update `COLLAB/STATUS.md` with run results and `COLLAB/TODO.md` with task status.
+Add a matching row to `MODEL_REGISTRY.md` using the row template at the bottom of that file.

@@ -1,0 +1,45 @@
+experiment_name: "chignolin_egnn_adaln_aa"
+model_type: "egnn_adaln"          # same architecture as egnn_adaln — 93 atoms instead of 10
+
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/val.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93                  # all heavy atoms (backbone + side-chains)
+  augment_se3: false
+  coord_scale: 16.32               # matches all-atom coord std (computed from training set)
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+model:
+  hidden_dim:       128
+  edge_dim:         64
+  n_layers:         5
+  time_dim:         64
+  energy_dim:       32             # energy conditioning enabled (energy still meaningful)
+  energy_drop_prob: 0.15
+
+# All-atom physics: AllAtomPhysics is auto-selected by train_egnn_adaln.py
+# when n_residues != 10. Uses 64 data-derived per-bond targets + clash avoidance.
+physics:
+  bond_weight:  1.0    # per-bond MSE against data-derived ideal lengths
+  clash_weight: 0.1    # heavy-atom clash repulsion (cutoff 2.5 Å)
+
+training:
+  batch_size:     128              # reduced from 512: N=93 gives O(N²)=8649 pairs/structure
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.05             # start conservative; raise to 0.10 if bond RMSE plateaus
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+
+paths:
+  checkpoint_dir: "checkpoints/egnn_adaln_aa"

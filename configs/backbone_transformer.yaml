@@ -1,0 +1,43 @@
+experiment_name: chignolin_backbone_transformer
+
+data:
+  train_path:  data_backbone/train.npz
+  val_path:    data_backbone/val.npz
+  test_path:   data_backbone/test.npz
+  n_residues:  10          # residues (model uses 30 atoms = 3 × n_residues)
+  coord_scale: 3.42        # Å — std of centered backbone coords (computed from train set)
+  augment_se3: true
+
+model_type: backbone_transformer
+
+model:
+  hidden_dim:       256
+  n_heads:          8
+  n_layers:         6
+  time_dim:         64
+  dropout:          0.1
+  energy_drop_prob: 0.15
+
+diffusion:
+  T:        500
+  schedule: cosine
+
+physics:
+  bond_weight:  2.0    # tighter weight vs Cα model; bonds are 7× more constrained
+  clash_weight: 0.1
+  angle_weight: 0.5
+
+training:
+  batch_size:    512
+  n_epochs:      500
+  lr:            0.0003
+  warmup_steps:  1000
+  grad_clip:     1.0
+  ema_decay:     0.9999
+  physics_weight: 0.05
+  val_every:     10
+  save_every:    50
+  num_workers:   4
+
+paths:
+  checkpoint_dir: checkpoints/backbone_transformer

@@ -1,0 +1,53 @@
+experiment_name: "chignolin_flowmatch_v2_energy_vel"
+model_type:      "flowmatch_v2_energy"   # EGNNv2 + velocity prediction + energy CFG
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── EGNNv2 velocity network ───────────────────────────────────────────────────
+model:
+  hidden_dim:       192
+  edge_dim:         96
+  n_layers:         7
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  n_rbf:            16      # RBF distance features (0.5–15.5 Å, σ=0.5 Å)
+  sep_dim:          4       # sequence-separation embedding
+  x1_pred:          false   # VELOCITY PREDICTION — x₁-pred collapses with this architecture
+  dropout:          0.1
+
+# ── Physics constraints ───────────────────────────────────────────────────────
+physics:
+  bond_weight:  2.0    # doubled vs baseline — bond validity is the primary metric
+  clash_weight: 0.1
+  angle_weight: 0.5
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     512
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.15    # 3× stronger than legacy 0.05, with t²-weighting
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_v2_energy"

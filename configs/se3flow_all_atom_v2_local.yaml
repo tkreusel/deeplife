@@ -1,0 +1,50 @@
+experiment_name: "chignolin_se3flow_all_atom_v2_local"
+model_type:      "se3flow_energy"
+
+# CPU smoke test: tiny model, 5 epochs, no compile/AMP
+# Run: python scripts/train_flow_energy.py --config configs/se3flow_all_atom_v2_local.yaml
+
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/val.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93
+  augment_se3: false
+  coord_scale: 16.32
+
+flow:
+  sigma_min:       1.0e-4
+  harmonic_prior:  true
+
+model:
+  hidden_dim:       64             # tiny for CPU speed
+  edge_dim:         32
+  n_layers:         2              # minimal depth
+  time_dim:         32
+  energy_dim:       16
+  energy_drop_prob: 0.15
+  n_rbf:            8
+  sep_dim:          4
+  x1_pred:          false
+  self_cond:        true
+
+physics:
+  bond_weight:  2.0
+  clash_weight: 0.1
+
+training:
+  batch_size:     4                # tiny batch for CPU
+  lr:             1.0e-4
+  n_epochs:       5
+  warmup_steps:   10
+  grad_clip:      1.0
+  ema_decay:      0.999
+  val_every:      1
+  save_every:     5
+  num_workers:    0
+  amp:            false
+  compile:        false
+  physics_weight: 0.15
+
+paths:
+  checkpoint_dir: "checkpoints/se3flow_all_atom_v2_local"

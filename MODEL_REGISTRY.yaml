@@ -1,0 +1,1382 @@
+# MODEL_REGISTRY.yaml
+# Comprehensive registry of all trained models in the deeplife / Chignolin project.
+#
+# PATHS: Checkpoints live under  deeplife/checkpoints/<family>/<version>/
+#        Always use  best.pt  for evaluation (EMA weights, best val loss).
+#        Never commit *.pt files (gitignored).
+#
+# STATUS:
+#   production  — full training run, meaningful eval results
+#   partial     — run completed or near-complete but known issues
+#   smoke_test  — tiny model / ≤5 epochs, verification only
+#   failed      — training stagnated (val_loss ≫ expected) or model catastrophically failed
+#   in_progress — actively training, checkpoint is mid-run snapshot
+#
+# FRAMEWORKS:
+#   ddpm         — Gaussian Diffusion (DDPM), Cα or all-atom Cartesian coords
+#   flow_match   — SE(3)-equivariant OT-CFM, Cα or all-atom Cartesian coords
+#   torsion_flow — OT-CFM on internal coordinate space (θ/φ dihedral torus)
+#   backbone_ipa — IPA-Transformer + torsion flow on (φ,ψ) backbone angles
+#
+# HOW TO EVALUATE (after finding the checkpoint):
+#   python scripts/evaluate.py --ckpt checkpoints/<family>/<ver>/best.pt --test data/test.npz --n 1000 --steps 100
+#   python scripts/quick_sample.py --checkpoint checkpoints/<family>/<ver>/best.pt --n 50 --steps 100
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# WHEN YOU TRAIN A NEW MODEL: add an entry to this file following the template
+# at the bottom. Also update COLLAB/STATUS.md and COLLAB/TODO.md.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Reference values (Chignolin MD ensemble, Cα-only unless noted)
+reference:
+  bond_validity_0.5pct: 100
+  bond_validity_0.2pct: 98
+  bond_rmse_ang: 0.063
+  rg_mean_ang: 5.92
+  rg_std_ang: 1.11
+  ete_mean_ang: 12.0
+  diversity_rmsd_ang: 3.79
+
+models:
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 1 — Transformer DDPM (Cα, Cartesian)
+  # Score network: TransformerScoreNetwork (residues as tokens, self-attention)
+  # Diffusion: GaussianDiffusion (DDPM); ZeroCoM subspace NOT used.
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: baseline/v1
+    name: Transformer-DDPM-v1
+    family: baseline
+    version: v1
+    model_type: transformer
+    framework: ddpm
+    data: ca_only
+    description: >
+      TransformerScoreNetwork (128 hidden, 4 layers) + GaussianDiffusion.
+      Run stopped at epoch 19 — incomplete, do not use for evaluation.
+    architecture:
+      hidden_dim: 128
+      n_layers: 4
+      n_heads: 4
+      augment_se3: false
+    training:
+      epochs_run: 19
+      target_epochs: 500
+      best_val_loss: 0.7896
+    checkpoint: checkpoints/baseline/v1/best.pt
+    eval_metrics: null
+    status: partial
+    notes: "Stopped at epoch 19 (early). Likely an interrupted run."
+
+  - id: baseline/v2
+    name: Transformer-DDPM-v2-LargeBatch
+    family: baseline
+    version: v2
+    model_type: transformer
+    framework: ddpm
+    data: ca_only
+    description: >
+      Same architecture as v1 but trained with batch_size=2048.
+      Poor convergence due to large batch — do not use.
+    architecture:
+      hidden_dim: 128
+      n_layers: 4
+      n_heads: 4
+      batch_size: 2048
+    training:
+      epochs_run: 129
+      target_epochs: 500
+      best_val_loss: 0.7495
+    checkpoint: checkpoints/baseline/v2/best.pt
+    eval_metrics: null
+    status: partial
+    notes: "Large batch caused poor convergence. See STATUS.md — explicitly flagged as bad run."
+
+  - id: baseline/v3
+    name: Transformer-DDPM-v3
+    family: baseline
+    version: v3
+    model_type: transformer
+    framework: ddpm
+    data: ca_only
+    description: >
+      TransformerScoreNetwork (128 hidden, 4 layers) + GaussianDiffusion.
+      Best-converged run with batch_size=512. Structures are too compact
+      (Rg/ETE below reference) but highest bond validity among early models.
+    architecture:
+      hidden_dim: 128
+      n_layers: 4
+      n_heads: 4
+      augment_se3: false
+      batch_size: 512
+    training:
+      epochs_run: 499
+      target_epochs: 500
+      best_val_loss: 0.0891
+    checkpoint: checkpoints/baseline/v3/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 47.2
+      rg_mean_ang: 4.93
+      ete_mean_ang: 6.9
+      mmd: 0.0618
+    status: production
+    notes: "Ablation baseline (no AdaLN). Compact structures (ETE 6.9 vs ref 12.0)."
+
+  - id: baseline_transformed/v1
+    name: Transformer-DDPM-SE3aug-v1
+    family: baseline_transformed
+    version: v1
+    model_type: transformer
+    framework: ddpm
+    data: ca_only
+    description: >
+      Same as baseline/v3 but with SE(3) random rotation augmentation
+      (augment_se3=true). Tests whether orientation augmentation helps
+      generalization for the non-equivariant Transformer.
+    architecture:
+      hidden_dim: 128
+      n_layers: 4
+      n_heads: 4
+      augment_se3: true
+      batch_size: 512
+    training:
+      epochs_run: 469
+      target_epochs: 500
+      best_val_loss: 0.1966
+    checkpoint: checkpoints/baseline_transformed/v1/best.pt
+    eval_metrics: null
+    status: production
+    notes: "SE3 augmentation variant of transformer baseline. No formal evaluation recorded."
+
+  - id: transformer_adaln/v1
+    name: AdaLN-Transformer-v1
+    family: transformer_adaln
+    version: v1
+    model_type: transformer_adaln
+    framework: ddpm
+    data: ca_only
+    description: >
+      AdaLNTransformerScoreNetwork: Transformer with Adaptive Layer Normalization
+      (AdaLN-Zero per layer, zero-init scale/shift/gate). No energy conditioning,
+      no physics loss. Ablation model to isolate the AdaLN contribution.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      energy_conditioning: false
+      physics_weight: 0.0
+    training:
+      epochs_run: 419
+      target_epochs: 500
+      best_val_loss: 0.1836
+    checkpoint: checkpoints/transformer_adaln/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 75.4
+      bond_rmse_ang: 0.272
+      rg_mean_ang: 5.65
+      ete_mean_ang: 10.69
+      mmd: 0.0323
+      diversity_rmsd_ang: 7.80
+    status: production
+    notes: >
+      AdaLN alone provides +37pp bond validity vs baseline (47.2%→75.4%).
+      Energy and physics add on top. Key ablation control.
+
+  - id: transformer_adaln_energy/v1
+    name: AdaLN-Transformer-Energy-v1
+    family: transformer_adaln_energy
+    version: v1
+    model_type: transformer_adaln_energy
+    framework: ddpm
+    data: ca_only
+    description: >
+      AdaLN Transformer + energy CFG (classifier-free guidance via null embedding).
+      Energy label from MD simulation conditions generation temperature τ∈[0,1].
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      energy_conditioning: true
+      physics_weight: 0.0
+    training:
+      epochs_run: 499
+      target_epochs: 500
+      best_val_loss: 0.1764
+    checkpoint: checkpoints/transformer_adaln_energy/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 74.8
+      bond_rmse_ang: 0.253
+      rg_mean_ang: 5.62
+      ete_mean_ang: 10.43
+      mmd: 0.0342
+    status: production
+    notes: >
+      Energy adds ~0pp bond validity vs AdaLN-only (74.8% vs 75.4%).
+      Energy helps inference-time temperature control, not bond geometry.
+
+  - id: transformer_adaln_energy_physics/v1
+    name: AdaLN-Transformer-Energy-Physics-v1
+    family: transformer_adaln_energy_physics
+    version: v1
+    model_type: transformer_adaln_energy
+    framework: ddpm
+    data: ca_only
+    description: >
+      AdaLN Transformer + energy CFG + bond/clash/angle physics loss
+      (physics_weight=0.05). Best Cartesian model: 90% bond validity.
+      Recommended for evaluation of Cα DDPM family.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      energy_conditioning: true
+      physics_weight: 0.05
+    training:
+      epochs_run: 409
+      target_epochs: 500
+      best_val_loss: 0.1822
+    checkpoint: checkpoints/transformer_adaln_energy_physics/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 90.0
+      bond_validity_0.2pct: 32.6
+      bond_rmse_ang: 0.186
+      rg_mean_ang: 5.73
+      ete_mean_ang: 10.82
+      mmd: 0.0323
+      diversity_rmsd_ang: 7.91
+    status: production
+    notes: >
+      BEST CARTESIAN MODEL. Physics adds +15.6pp validity over AdaLN+E.
+      Structures systematically compact (ETE 10.82 vs ref 12.0 — Transformer
+      mode-collapse tendency).
+
+  - id: transformer_adaln_sc/v1
+    name: AdaLN-Transformer-SelfCond-v1
+    family: transformer_adaln_sc
+    version: v1
+    model_type: transformer_adaln_sc
+    framework: ddpm
+    data: ca_only
+    description: >
+      AdaLN Transformer + self-conditioning (SC): model predicts x₀ and feeds
+      it back as additional input for next denoising step.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      self_conditioning: true
+      physics_weight: 0.05
+    training:
+      epochs_run: 409
+      target_epochs: 500
+      best_val_loss: 0.1178
+    checkpoint: checkpoints/transformer_adaln_sc/v1/best.pt
+    eval_metrics: null
+    status: production
+
+  - id: transformer_adaln_sc/v2
+    name: AdaLN-Transformer-SelfCond-v2
+    family: transformer_adaln_sc
+    version: v2
+    model_type: transformer_adaln_sc
+    framework: ddpm
+    data: ca_only
+    description: >
+      Second training run of AdaLN Transformer with self-conditioning.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      self_conditioning: true
+      physics_weight: 0.05
+    training:
+      epochs_run: 479
+      target_epochs: 500
+      best_val_loss: 0.1169
+    checkpoint: checkpoints/transformer_adaln_sc/v2/best.pt
+    eval_metrics: null
+    status: production
+
+  - id: transformer_adaln_sc/v3
+    name: AdaLN-Transformer-SelfCond-v3
+    family: transformer_adaln_sc
+    version: v3
+    model_type: transformer_adaln_sc
+    framework: ddpm
+    data: ca_only
+    description: >
+      Third run of AdaLN Transformer + self-conditioning. Good bond validity
+      (89.7%) but broken global structure (ETE=14.7 vs ref 12.0).
+      Do not use as representative model.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      adaLN: true
+      self_conditioning: true
+      physics_weight: 0.05
+    training:
+      epochs_run: 499
+      target_epochs: 500
+      best_val_loss: 0.1826
+    checkpoint: checkpoints/transformer_adaln_sc/v3/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 89.7
+      bond_validity_0.2pct: 18.1
+      bond_rmse_ang: 0.180
+      rg_mean_ang: 6.52
+      ete_mean_ang: 14.69
+      mmd: 0.0358
+      diversity_rmsd_ang: 9.10
+    status: production
+    notes: "Good bond validity but ETE/Rg both wrong — broken global structure."
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 2 — EGNN DDPM (Cα, Cartesian, SE(3)-equivariant)
+  # Score network: EGNNScoreNetwork; SE(3)-equivariant via coord updates.
+  # Diffusion: ZeroCoMGaussianDiffusion (projects noise to zero-CoM subspace).
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: egnn/v1
+    name: EGNN-DDPM-v1
+    family: egnn
+    version: v1
+    model_type: egnn
+    framework: ddpm
+    data: ca_only
+    description: >
+      EGNNScoreNetwork (SE(3)-equivariant) + ZeroCoMGaussianDiffusion.
+      Baseline EGNN without physics loss. SE(3) equivariance verified.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.0
+    training:
+      epochs_run: 459
+      target_epochs: 500
+      best_val_loss: 0.1779
+    checkpoint: checkpoints/egnn/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 15.7
+      bond_validity_0.2pct: 1.8
+      bond_rmse_ang: 0.495
+      rg_mean_ang: 5.84
+      ete_mean_ang: 11.97
+      mmd: 0.0358
+      diversity_rmsd_ang: 8.17
+    status: production
+    notes: "SE(3)-equivariant baseline; good Rg/ETE but low bond validity without physics."
+
+  - id: egnn/v3
+    name: EGNN-DDPM-Physics0.05-v3
+    family: egnn
+    version: v3
+    model_type: egnn
+    framework: ddpm
+    data: ca_only
+    description: >
+      EGNN + physics loss (physics_weight=0.05): bond-length MSE,
+      clash repulsion, virtual bond-angle Huber loss.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.05
+    training:
+      epochs_run: 429
+      target_epochs: 500
+      best_val_loss: 0.1968
+    checkpoint: checkpoints/egnn/v3/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 44.2
+      bond_rmse_ang: 0.331
+      rg_mean_ang: 5.87
+      ete_mean_ang: 12.16
+      mmd: 0.0323
+    status: production
+    notes: "Physics 0.05 gives +28pp validity vs v1. Rg/ETE near reference."
+
+  - id: egnn/v4
+    name: EGNN-DDPM-Physics0.10-v4
+    family: egnn
+    version: v4
+    model_type: egnn
+    framework: ddpm
+    data: ca_only
+    description: >
+      EGNN + doubled physics loss (physics_weight=0.10). Best EGNN-DDPM model.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.10
+    training:
+      epochs_run: 459
+      target_epochs: 500
+      best_val_loss: 0.2035
+    checkpoint: checkpoints/egnn/v4/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 58.8
+      bond_rmse_ang: 0.314
+      rg_mean_ang: 6.05
+      ete_mean_ang: 12.79
+      mmd: 0.0342
+    status: production
+    notes: "BEST EGNN-DDPM. +14.6pp vs v3 (phys 0.05). Rg slightly high at 6.05."
+
+  - id: egnn_adaln/v1
+    name: EGNN-AdaLN-Energy-v1
+    family: egnn_adaln
+    version: v1
+    model_type: egnn_adaln
+    framework: ddpm
+    data: ca_only
+    description: >
+      EGNN + AdaLN-Zero per-layer conditioning + energy CFG +
+      physics_weight=0.10. Best ETE of any EGNN model but high clash rate
+      (39.1%) because physics not yet strong enough.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      adaLN: true
+      energy_conditioning: true
+      physics_weight: 0.10
+    training:
+      epochs_run: 499
+      target_epochs: 500
+      best_val_loss: 0.2076
+    checkpoint: checkpoints/egnn_adaln/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 43.7
+      bond_rmse_ang: 0.377
+      rg_mean_ang: 5.73
+      ete_mean_ang: 12.04
+      mmd: 0.032
+      clash_rate_pct: 39.1
+    status: production
+    notes: >
+      Best ETE among EGNN family (12.04 ≈ ref 12.0). High clash rate 39.1%
+      because physics weight insufficient to prevent clashes.
+
+  - id: egnn_adaln_aa/v2
+    name: EGNN-AdaLN-AllAtom-v2
+    family: egnn_adaln_aa
+    version: v2
+    model_type: egnn_adaln
+    framework: ddpm
+    data: all_atom
+    description: >
+      EGNN+AdaLN on all-atom (93 heavy atoms per structure) representation.
+      Stopped at epoch 9 — essentially a smoke test result.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      n_residues: 93
+      coord_scale: 16.32
+      physics_weight: 0.0
+    training:
+      epochs_run: 9
+      target_epochs: 500
+      best_val_loss: 0.9605
+    checkpoint: checkpoints/egnn_adaln_aa/v2/best.pt
+    eval_metrics: null
+    status: partial
+    notes: "Stopped very early (9 epochs). Effectively a smoke test — no meaningful results."
+
+  - id: egnn_adaln_aa/v3
+    name: EGNN-AdaLN-AllAtom-v3
+    family: egnn_adaln_aa
+    version: v3
+    model_type: egnn_adaln
+    framework: ddpm
+    data: all_atom
+    description: >
+      EGNN+AdaLN on all-atom (93 atoms), full run (449 epochs).
+      CATASTROPHIC FAILURE: 0% bond validity, bond RMSE=1.78 Å.
+      Root cause: EGNN + 93-atom input is far too hard to optimise.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      n_residues: 93
+      coord_scale: 16.32
+      physics_weight: 0.0
+    training:
+      epochs_run: 449
+      target_epochs: 500
+      best_val_loss: 0.0634
+    checkpoint: checkpoints/egnn_adaln_aa/v3/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 0.0
+      bond_rmse_ang: 1.78
+    status: failed
+    notes: "Catastrophic failure. All-atom EGNN is intractable with this architecture."
+
+  - id: egnn_energy_aa/v2
+    name: EGNN-Energy-AllAtom-v2
+    family: egnn_energy_aa
+    version: v2
+    model_type: egnn_energy
+    framework: ddpm
+    data: all_atom
+    description: >
+      EGNN with energy conditioning on all-atom (93 atoms) representation.
+      Partial run (169 epochs out of 500).
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      n_residues: 93
+      coord_scale: 16.32
+      physics_weight: 0.10
+    training:
+      epochs_run: 179
+      target_epochs: 500
+      best_val_loss: 0.0786
+    checkpoint: checkpoints/egnn_energy_aa/v2/best.pt
+    eval_metrics: null
+    status: partial
+    notes: "Run interrupted at 169/500 epochs."
+
+  - id: egnn_energy_aa_local/v2
+    name: EGNN-Energy-AllAtom-Local-v2
+    family: egnn_energy_aa_local
+    version: v2
+    model_type: egnn_energy
+    framework: ddpm
+    data: all_atom
+    description: >
+      Smoke-test version of egnn_energy_aa (tiny model, 3 epochs).
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      n_residues: 93
+      physics_weight: 0.10
+    training:
+      epochs_run: 2
+      target_epochs: 3
+      best_val_loss: 0.2984
+    checkpoint: checkpoints/egnn_energy_aa_local/v2/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 3 — Flow Matching, Cartesian (SE(3)-equivariant OT-CFM)
+  # Framework: ZeroCoMFlowMatching (Heun's ODE solver)
+  # EGNN backbone; all on Cα coords unless noted as all_atom.
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: flowmatch/v1
+    name: FlowMatch-EGNN-v1-local
+    family: flowmatch
+    version: v1
+    model_type: flowmatch
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE(3)-equivariant OT-CFM with EGNN backbone. Smoke-test run
+      (5 epochs, hidden=32, 2 layers). Kept for reference; not meaningful.
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.0
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 1.1556
+    checkpoint: checkpoints/flowmatch/v1/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: flowmatch/v2
+    name: FlowMatch-EGNN-v2
+    family: flowmatch
+    version: v2
+    model_type: flowmatch
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE(3)-equivariant OT-CFM with EGNN backbone (hidden=128, 5 layers).
+      500-epoch full run. Best global structure (Rg, ETE, MMD) among early
+      models but poor bond validity (6%) — physics loss needed.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      sigma_min: 1.0e-4
+      physics_weight: 0.0
+    training:
+      epochs_run: 479
+      target_epochs: 500
+      best_val_loss: 0.6351
+    checkpoint: checkpoints/flowmatch/v2/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 5.0
+      rg_mean_ang: 5.96
+      ete_mean_ang: 12.4
+      mmd: 0.0323
+    status: production
+    notes: "SE(3) equivariance verified. Best Rg/MMD of early generation; needs physics."
+
+  - id: flowmatch_physics/v2
+    name: FlowMatch-Physics-v2-local
+    family: flowmatch_physics
+    version: v2
+    model_type: flowmatch
+    framework: flow_match
+    data: ca_only
+    description: >
+      Flow matching + t²-weighted bond/clash/angle physics loss.
+      Smoke-test version (5 epochs).
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.05
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 1.0942
+    checkpoint: checkpoints/flowmatch_physics/v2/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: flowmatch_physics/v3
+    name: FlowMatch-Physics-v3
+    family: flowmatch_physics
+    version: v3
+    model_type: flowmatch
+    framework: flow_match
+    data: ca_only
+    description: >
+      Flow matching + physics (bond/clash/angle), full 500-epoch run.
+      Improves bond validity over pure flowmatch but still below DDPM models.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.05
+    training:
+      epochs_run: 489
+      target_epochs: 500
+      best_val_loss: 0.6394
+    checkpoint: checkpoints/flowmatch_physics/v3/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 10.8
+      rg_mean_ang: 5.90
+    status: production
+
+  - id: flowmatch_energy/v1
+    name: FlowMatch-Energy-v1-local
+    family: flowmatch_energy
+    version: v1
+    model_type: flowmatch_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      Flow matching + energy CFG. Smoke-test version (5 epochs).
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.0
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 1.0528
+    checkpoint: checkpoints/flowmatch_energy/v1/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: flowmatch_energy/v2
+    name: FlowMatch-Energy-v2
+    family: flowmatch_energy
+    version: v2
+    model_type: flowmatch_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      Flow matching + energy CFG, 500-epoch full run. Temperature τ∈[0,1]
+      controls stable↔transient conformations via classifier-free guidance.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.0
+    training:
+      epochs_run: 449
+      target_epochs: 500
+      best_val_loss: 0.5989
+    checkpoint: checkpoints/flowmatch_energy/v2/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 16.0
+      bond_rmse_ang: 0.666
+      rg_mean_ang: 5.90
+    status: production
+
+  - id: flowmatch_energy_physics/v1
+    name: FlowMatch-Energy-Physics-v1
+    family: flowmatch_energy_physics
+    version: v1
+    model_type: flowmatch_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      Flow matching + energy CFG + physics loss. Best bond validity
+      in the Cartesian flow-matching family. Recommended for evaluating
+      energy-conditioned CFM on Cα representation.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.05
+    training:
+      epochs_run: 449
+      target_epochs: 500
+      best_val_loss: 0.6112
+    checkpoint: checkpoints/flowmatch_energy_physics/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 17.2
+      bond_rmse_ang: 0.581
+      rg_mean_ang: 5.89
+      rg_std_ang: 1.04
+      mmd: 0.032
+    status: production
+    notes: "Best Cartesian flow-match model for bond validity. Still far below DDPM Transformer."
+
+  - id: flowmatch_v2_energy/v1
+    name: FlowMatch-v2-Energy-v1-local
+    family: flowmatch_v2_energy
+    version: v1
+    model_type: flowmatch_v2_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      EGNNv2 backbone + energy CFG + x1_pred mode. Smoke-test run (5 epochs).
+      Very high loss — x1_pred mode stagnation.
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.15
+      x1_pred: true
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 12.2061
+    checkpoint: checkpoints/flowmatch_v2_energy/v1/best.pt
+    eval_metrics: null
+    status: failed
+    notes: "x1_pred mode consistently stagnates at val_loss ~10–12 in this architecture."
+
+  - id: flowmatch_v2_energy/v2
+    name: FlowMatch-v2-Energy-v2
+    family: flowmatch_v2_energy
+    version: v2
+    model_type: flowmatch_v2_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      EGNNv2 + energy CFG + x1_pred, full 500-epoch run.
+      Training stagnated (val_loss stuck at ~10.6) — do not use.
+    architecture:
+      hidden_dim: 128
+      n_layers: 5
+      physics_weight: 0.15
+      x1_pred: true
+    training:
+      epochs_run: 449
+      target_epochs: 500
+      best_val_loss: 10.6069
+    checkpoint: checkpoints/flowmatch_v2_energy/v2/best.pt
+    eval_metrics: null
+    status: failed
+    notes: "Stagnated. x1_pred incompatible with accumulated-coord architecture."
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 4 — SE3Flow with Energy (SE(3)-equivariant, energy-conditioned)
+  # SE3FlowEnergyNet: EGNN-style equivariant network + energy CFG.
+  # Framework: ZeroCoMFlowMatching (OT-CFM, Heun ODE).
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: se3flow_energy/v1
+    name: SE3Flow-Energy-v1
+    family: se3flow_energy
+    version: v1
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3FlowEnergyNet (hidden=192, 7 layers, cond_emb in edge messages) +
+      energy CFG. Baseline SE3flow model. 39.8% bond validity — best of the
+      early flow-matching family.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.15
+      adaLN: false
+      x1_pred: false
+    training:
+      epochs_run: 459
+      target_epochs: 500
+      best_val_loss: 0.6201
+    checkpoint: checkpoints/se3flow_energy/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 39.8
+      rg_mean_ang: 5.91
+    status: production
+    notes: "Baseline SE3flow. cond_emb in phi_e edges."
+
+  - id: se3flow_energy/v2
+    name: SE3Flow-Energy-x1pred-v2
+    family: se3flow_energy
+    version: v2
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3flow with x1_pred=True + AdaLN + high physics weight. Stagnated.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.20
+      adaLN: true
+      x1_pred: true
+    training:
+      epochs_run: 199
+      target_epochs: 500
+      best_val_loss: 10.6395
+    checkpoint: checkpoints/se3flow_energy/v2/best.pt
+    eval_metrics: null
+    status: failed
+    notes: "x1_pred stagnation. All 5 x1_pred attempts across v2/v3/v4/v5 stagnated."
+
+  - id: se3flow_energy/v3
+    name: SE3Flow-Energy-x1pred-v3
+    family: se3flow_energy
+    version: v3
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3flow x1_pred + lower physics weight (0.05). Stagnated.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.05
+      x1_pred: true
+    training:
+      epochs_run: 139
+      target_epochs: 500
+      best_val_loss: 10.7850
+    checkpoint: checkpoints/se3flow_energy/v3/best.pt
+    eval_metrics: null
+    status: failed
+
+  - id: se3flow_energy/v4
+    name: SE3Flow-Energy-AdaLN-velocity-v4
+    family: se3flow_energy
+    version: v4
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3flow + AdaLN + velocity mode (x1_pred=False) + high physics.
+      Interrupted at epoch 49.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.15
+      adaLN: true
+      x1_pred: false
+    training:
+      epochs_run: 49
+      target_epochs: 500
+      best_val_loss: 1.7833
+    checkpoint: checkpoints/se3flow_energy/v4/best.pt
+    eval_metrics: null
+    status: partial
+    notes: "Interrupted at epoch 49."
+
+  - id: se3flow_energy/v5
+    name: SE3Flow-Energy-x1pred-bug-v5
+    family: se3flow_energy
+    version: v5
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3flow x1_pred attempt with config bug. Stagnated; logs overwritten
+      by finetune versioning bug.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      x1_pred: true
+    training:
+      epochs_run: 199
+      target_epochs: 500
+      best_val_loss: 11.4244
+    checkpoint: checkpoints/se3flow_energy/v5/best.pt
+    eval_metrics: null
+    status: failed
+    notes: "Config bug + log overwrite. Stagnated."
+
+  - id: se3flow_energy_finetune/v1
+    name: SE3Flow-Energy-Finetune-v1
+    family: se3flow_energy_finetune
+    version: v1
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      Fine-tune attempt from se3flow_energy base checkpoint, switching to
+      x1_pred mode. All attempts stagnated at val_loss ~10.6.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.15
+      x1_pred: true
+    training:
+      epochs_run: 479
+      target_epochs: 500
+      best_val_loss: 10.6178
+    checkpoint: checkpoints/se3flow_energy_finetune/v1/best.pt
+    eval_metrics: null
+    status: failed
+    notes: "Finetune stagnated. x1_pred incompatibility not resolved."
+
+  - id: se3flow_adaln_velocity/v1
+    name: SE3Flow-AdaLN-Velocity-v1
+    family: se3flow_adaln_velocity
+    version: v1
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      SE3flow + AdaLN-Zero per layer (velocity mode, cond_emb removed from
+      phi_e edges). Trained in a clean directory to separate from se3flow_energy
+      x1_pred experiments. Best SE3flow variant; loaded with cond_in_phi_e=False.
+    architecture:
+      hidden_dim: 192
+      n_layers: 7
+      physics_weight: 0.15
+      adaLN: true
+      x1_pred: false
+      cond_in_phi_e: false
+    training:
+      epochs_run: 489
+      target_epochs: 500
+      best_val_loss: 0.6266
+    checkpoint: checkpoints/se3flow_adaln_velocity/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 35.2
+      bond_validity_0.2pct: 7.1
+      bond_rmse_ang: 0.478
+      rg_mean_ang: 5.93
+      ete_mean_ang: 11.90
+      mmd: 0.0323
+      diversity_rmsd_ang: 8.27
+    status: production
+    notes: >
+      BEST SE3FLOW MODEL (Cα). AdaLN slightly hurt bond validity vs v1
+      (35.2% vs 39.8%) due to cond_emb removal from edges.
+      NOTE: evaluate.py auto-detects cond_in_phi_e=False from weight shape.
+
+  - id: se3flow_all_atom_v2/v1
+    name: SE3Flow-AllAtom-v2-v1
+    family: se3flow_all_atom_v2
+    version: v1
+    model_type: se3flow_energy
+    framework: flow_match
+    data: all_atom
+    description: >
+      SE3FlowEnergyNet on all-atom (93 heavy atoms) with: harmonic SHAKE prior
+      (64 bonds at ideal lengths), self-conditioning (RBF(x̂₁) → node features),
+      AllAtomPhysics (64-bond covalent RMSE + 2.5 Å clash). Best all-atom model.
+    architecture:
+      hidden_dim: 192
+      n_layers: 5
+      n_residues: 93
+      coord_scale: 16.32
+      physics_weight: 0.15
+      harmonic_prior: true
+      self_cond: true
+      adaLN: false
+    training:
+      epochs_run: 339
+      target_epochs: 500
+      best_val_loss: 0.0065
+    checkpoint: checkpoints/se3flow_all_atom_v2/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5ang: 40.0
+      bond_rmse_ang: 0.25
+      rg_mean_ang: 5.94
+    status: production
+    notes: >
+      BEST ALL-ATOM MODEL. 40% all-atom bond validity vs 24.6% for se3flow_all_atom v1.
+      Uses data_all_atom/ for evaluation. Smoke-test verified 2026-06-03.
+      See evaluate.py for all-atom-specific eval commands.
+
+  - id: se3flow_sc_local/v2
+    name: SE3Flow-SelfCond-Local-v2
+    family: se3flow_sc_local
+    version: v2
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: >
+      Smoke test of Phase 2 self-conditioning features on Cα data (5 epochs).
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.15
+      harmonic_prior: true
+      self_cond: true
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 0.8565
+    checkpoint: checkpoints/se3flow_sc_local/v2/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: se3flow_sc_local/v3
+    name: SE3Flow-SelfCond-Local-v3
+    family: se3flow_sc_local
+    version: v3
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: Smoke test of self-conditioning, iteration 3.
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.15
+      harmonic_prior: true
+      self_cond: true
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 0.8498
+    checkpoint: checkpoints/se3flow_sc_local/v3/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: se3flow_sc_local/v4
+    name: SE3Flow-SelfCond-Local-v4
+    family: se3flow_sc_local
+    version: v4
+    model_type: se3flow_energy
+    framework: flow_match
+    data: ca_only
+    description: Smoke test of self-conditioning, iteration 4.
+    architecture:
+      hidden_dim: 32
+      n_layers: 2
+      physics_weight: 0.15
+      harmonic_prior: true
+      self_cond: true
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 0.8658
+    checkpoint: checkpoints/se3flow_sc_local/v4/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 5 — Torsion / Internal Coordinate Models
+  # Represent Cα chain as bond angles θ (8 DOF) + dihedral φ (7 DOF).
+  # Bond validity is 100% BY CONSTRUCTION regardless of training quality.
+  # Framework: TorsionalFlowMatching (OT-CFM on flat torus T^7, Heun ODE).
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: torsion_flow/v1
+    name: TorsionFlow-MLP-v1
+    family: torsion_flow
+    version: v1
+    model_type: torsion_flow_energy
+    framework: torsion_flow
+    data: torsion_ca
+    description: >
+      TorsionFlowNet: 4-layer MLP (256 hidden, 118-dim input, 44K params)
+      with energy CFG. Riemannian OT-CFM on the (θ,φ) flat torus.
+      Bond validity 100% by construction. First torsion-space model.
+    architecture:
+      hidden_dim: 256
+      n_layers: 4
+      n_params_approx: 44000
+      theta_source: "gaussian_data_mean"
+      phi_source: "uniform"
+      energy_conditioning: true
+    training:
+      epochs_run: 409
+      target_epochs: 500
+      best_val_loss: 0.9298
+    checkpoint: checkpoints/torsion_flow/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 100.0
+      bond_rmse_ang: 0.0
+      rg_mean_ang: 6.15
+      ete_mean_ang: 13.97
+      mmd: 0.0349
+      clash_rate_pct: 3.6
+      diversity_rmsd_ang: 6.71
+    status: production
+    notes: >
+      Perfect bond validity by construction. ETE +18.8% above reference —
+      NeRF reconstruction amplifies angular errors. See torsion_transformer/v1
+      for improved version.
+
+  - id: torsion_flow_local/v1
+    name: TorsionFlow-MLP-Local-v1
+    family: torsion_flow_local
+    version: v1
+    model_type: torsion_flow_energy
+    framework: torsion_flow
+    data: torsion_ca
+    description: Smoke-test version of TorsionFlow MLP (5 epochs, tiny model).
+    architecture:
+      hidden_dim: 128
+      n_layers: 2
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 1.1413
+    checkpoint: checkpoints/torsion_flow_local/v1/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: torsion_transformer/v1
+    name: TorsionTransformer-v1
+    family: torsion_transformer
+    version: v1
+    model_type: torsion_transformer_energy
+    framework: torsion_flow
+    data: torsion_ca
+    description: >
+      TorsionTransformerNet: 15-token Transformer (one token per θ/φ DOF,
+      sin/cos features + positional embedding, d_model=256, 6 layers, 4 heads).
+      Data-driven WrappedNormal source; cosine warm-restarts LR schedule.
+      Trained 2000 epochs. Best torsion-space model: lower val_loss, better MMD.
+    architecture:
+      d_model: 256
+      n_layers: 6
+      n_heads: 4
+      phi_source_dist: data
+      theta_source_std: 0.403
+      energy_conditioning: true
+      cosine_warm_restarts: true
+    training:
+      epochs_run: 1999
+      target_epochs: 2000
+      best_val_loss: 0.7159
+    checkpoint: checkpoints/torsion_transformer/v1/best.pt
+    eval_metrics:
+      bond_validity_0.5pct: 100.0
+      bond_rmse_ang: 0.0
+      rg_mean_ang: 6.18
+      ete_mean_ang: 14.14
+      mmd: 0.0333
+      clash_rate_pct: 1.3
+      diversity_rmsd_ang: 6.70
+    status: production
+    notes: >
+      BEST TORSION MODEL. −23% val_loss vs MLP v1; −64% clash rate.
+      ETE/Rg/diversity unchanged — NeRF amplification is the bottleneck,
+      not model capacity. BackboneIPA model addresses this.
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP 6 — Backbone Models (N, Cα, C atoms; real backbone DOF)
+  # Operate on N–Cα–C representation (30 atoms for 10 residues) or
+  # backbone torsion (φ,ψ) angles reconstructed via AlphaFold2 frames.
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: backbone_transformer/v1
+    name: BackboneTransformer-v1
+    family: backbone_transformer
+    version: v1
+    model_type: backbone_transformer
+    framework: ddpm
+    data: backbone
+    description: >
+      BackboneTransformerScoreNetwork: 30-token AdaLN-Zero Transformer on
+      N–Cα–C backbone (10 residues × 3 atoms). Each token uses atom_type
+      embedding (N/CA/C) + residue embedding. 3 distinct bond targets:
+      N–Cα=1.460 Å, Cα–C=1.525 Å, C–N=1.329 Å. coord_scale=3.42 Å.
+    architecture:
+      hidden_dim: 256
+      n_layers: 6
+      n_heads: 8
+      n_tokens: 30
+      adaLN: true
+      energy_conditioning: true
+      physics_weight: 0.05
+      coord_scale: 3.42
+      bond_weight: 2.0
+    training:
+      epochs_run: 479
+      target_epochs: 500
+      best_val_loss: 0.0872
+    checkpoint: checkpoints/backbone_transformer/v1/best.pt
+    eval_metrics: null
+    status: production
+    notes: >
+      Smoke test converged cleanly (0.179→0.088). Full 500-epoch run near-complete.
+      Uses data_backbone/ for evaluation (30-atom coords).
+
+  - id: backbone_transformer_local/v1
+    name: BackboneTransformer-Local-v1
+    family: backbone_transformer_local
+    version: v1
+    model_type: backbone_transformer
+    framework: ddpm
+    data: backbone
+    description: Smoke-test version of BackboneTransformer (5 epochs, tiny model).
+    architecture:
+      hidden_dim: 64
+      n_layers: 2
+      physics_weight: 0.05
+    training:
+      epochs_run: 4
+      target_epochs: 5
+      best_val_loss: 0.0878
+    checkpoint: checkpoints/backbone_transformer_local/v1/best.pt
+    eval_metrics: null
+    status: smoke_test
+
+  - id: backbone_ipa/v1
+    name: BackboneIPA-v1
+    family: backbone_ipa
+    version: v1
+    model_type: backbone_ipa_energy
+    framework: backbone_ipa
+    data: backbone_torsion
+    description: >
+      BackboneIPAFlowNet: 10-residue tokens with IPA geometric attention bias
+      (RBF + local AlphaFold2 frame directions + seq-sep) + AdaLN-Zero layers
+      + torsion flow on backbone (φ,ψ) angles. SE(3)-invariant design.
+      ~4M params; trained with cart_weight=0.1 auxiliary Cartesian loss.
+      Addresses NeRF compounding error that limits TorsionTransformer.
+    architecture:
+      d_model: 256
+      n_layers: 6
+      n_heads: 8
+      n_tokens: 10
+      adaLN: true
+      ipa_geometric_bias: true
+      cart_weight: 0.1
+      self_distill: false
+      energy_conditioning: true
+      n_params_approx: 4060000
+    training:
+      epochs_run: 1176
+      target_epochs: 2000
+      best_val_loss: 0.5506
+    checkpoint: checkpoints/backbone_ipa/v1/best.pt
+    eval_metrics: null
+    status: in_progress
+    notes: >
+      IPA addresses TorsionTransformer ETE ceiling (14.14 Å → target 12–13 Å)
+      via SE(3)-invariant geometric attention features. Smoke test verified
+      2026-06-03. Steady improvement: val 0.5641 (ep700) → 0.5506 (ep1120, best).
+      Still training; plan to self-distill from best.pt after ep1500.
+      Self-distill config ready: configs/backbone_ipa_distill.yaml.
+
+  - id: backbone_ipa/v8
+    name: BackboneIPA-v8
+    family: backbone_ipa
+    version: v8
+    model_type: backbone_ipa_energy
+    framework: backbone_ipa
+    data: backbone_torsion
+    description: >
+      BackboneIPAFlowNet v8: same IPA+AdaLN-Zero+torsion-flow architecture as v1
+      (d_model=256, 6 layers, 8 heads, cart_weight=0.1) but trained for 3000+
+      epochs. Best val_loss 0.5231 at ep3039 vs v1's 0.5506 at ep1176 — steady
+      improvement from extended training. Still in progress at time of evaluation.
+    architecture:
+      d_model: 256
+      n_layers: 6
+      n_heads: 8
+      n_tokens: 10
+      adaLN: true
+      ipa_geometric_bias: true
+      cart_weight: 0.1
+      self_distill: false
+      energy_conditioning: true
+      n_params_approx: 4060000
+    training:
+      epochs_run: 3039
+      target_epochs: null
+      best_val_loss: 0.5231
+    checkpoint: checkpoints/backbone_ipa/v8/best.pt
+    eval_metrics:
+      bond_rmse_ang: 0.000
+      bond_valid_05pct: 1.000
+      bond_valid_02pct: 1.000
+      clash_rate: 0.008
+      rg_mean_ang: 6.155
+      rg_std_ang: 1.002
+      ete_mean_ang: 14.380
+      mmd: 0.0345
+      diversity_ang: 7.131
+      rosetta_pass_fraction: 0.75
+      rosetta_total_score_mean: -5.79
+      nnd_ratio: 1.164
+      valid_fraction: 0.992
+    status: in_progress
+    notes: >
+      Best Rosetta score of any backbone model (−5.8 REU mean, 75% pass filter).
+      Clash rate improved to 0.8% vs v1's 2.8%. MMD best of backbone group (0.0345).
+      ETE bias persists at 14.4 Å (same as v1) — NeRF compounding ceiling, not a
+      training-depth issue. τ-REU Rosetta response confirmed: Δ=21.4 REU from τ=0→1,
+      though Rg/ETE monotonicity FAIL (energy signal doesn't propagate to geometry).
+
+  - id: backbone_ipa_local/v1
+    name: BackboneIPA-Local-v1
+    family: backbone_ipa_local
+    version: v1
+    model_type: backbone_ipa_energy
+    framework: backbone_ipa
+    data: backbone_torsion
+    description: >
+      Smoke-test version of BackboneIPA (5 epochs, d_model=64, 2 layers).
+    architecture:
+      d_model: 64
+      n_layers: 2
+      n_heads: 4
+    training:
+      epochs_run: 3
+      target_epochs: 5
+      best_val_loss: 4.0556
+    checkpoint: checkpoints/backbone_ipa_local/v1/best.pt
+    eval_metrics: null
+    status: smoke_test
+    notes: "Smoke test passed: loss 5.67→4.11, SE(3) invariance errors <1e-6."
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TEMPLATE — copy and fill in when you train a new model
+# ──────────────────────────────────────────────────────────────────────────────
+#
+#   - id: <family>/<version>
+#     name: <ShortDescriptiveName>
+#     family: <checkpoint_dir_name>
+#     version: <v1|v2|...>
+#     model_type: <from config model_type field>
+#     framework: <ddpm|flow_match|torsion_flow|backbone_ipa>
+#     data: <ca_only|all_atom|backbone|backbone_torsion|torsion_ca>
+#     description: >
+#       One to three sentences describing architecture and what makes this
+#       run distinct from others in the same family.
+#     architecture:
+#       hidden_dim: <int>
+#       n_layers: <int>
+#       # ... add other relevant params
+#     training:
+#       epochs_run: <int>
+#       target_epochs: <int>
+#       best_val_loss: <float>
+#     checkpoint: checkpoints/<family>/<version>/best.pt
+#     eval_metrics:        # fill in after running evaluate.py; null until then
+#       bond_validity_0.5pct: null
+#       rg_mean_ang: null
+#       ete_mean_ang: null
+#       mmd: null
+#     status: <production|partial|smoke_test|failed|in_progress>
+#     notes: "Any caveats, known issues, or notable findings."

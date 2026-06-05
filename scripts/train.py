@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.dataset import get_dataloaders
 from models.diffusion import GaussianDiffusion
 from models.baseline import MLPScoreNetwork, TransformerScoreNetwork
+from models.transformer_adaln import AdaLNTransformerScoreNetwork
 
 
 # ── EMA ───────────────────────────────────────────────────────────────────────
@@ -46,11 +47,14 @@ class EMA:
 
     def apply_shadow(self):
         original = copy.deepcopy(self.model.state_dict())
-        self.model.load_state_dict(self.shadow)
+        # strict=False: shadow contains only trainable parameters, not buffers
+        # (e.g. RBF centers, positional embeddings registered as buffers).
+        # Buffers keep their current values unchanged.
+        self.model.load_state_dict(self.shadow, strict=False)
         return original
 
     def restore(self, original):
-        self.model.load_state_dict(original)
+        self.model.load_state_dict(original, strict=False)
 
 
 # ── Versioning ────────────────────────────────────────────────────────────────
@@ -105,8 +109,17 @@ def build_model(config: dict) -> nn.Module:
             time_dim   = mc['time_dim'],
             dropout    = mc['dropout'],
         )
+    elif model_type == 'transformer_adaln':
+        return AdaLNTransformerScoreNetwork(
+            n_residues = n_res,
+            hidden_dim = mc['hidden_dim'],
+            n_heads    = mc['n_heads'],
+            n_layers   = mc['n_layers'],
+            time_dim   = mc['time_dim'],
+            dropout    = mc['dropout'],
+        )
     else:
-        raise ValueError(f"Unknown model_type '{model_type}'. Choose 'mlp' or 'transformer'.")
+        raise ValueError(f"Unknown model_type '{model_type}'. Choose 'mlp', 'transformer', or 'transformer_adaln'.")
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
@@ -145,6 +158,22 @@ def train(config: dict, resume_path: str = None):
     # ── diffusion ─────────────────────────────────────────────────────────────
     dc        = config['diffusion']
     diffusion = GaussianDiffusion(T=dc['T'], schedule=dc['schedule']).to(device)
+
+    # ── physics (optional) ────────────────────────────────────────────────────
+    phys_weight = tc.get('physics_weight', 0.0)
+    physics     = None
+    if phys_weight > 0.0:
+        from models.physics import ChignolinPhysics
+        pc      = config.get('physics', {})
+        physics = ChignolinPhysics(
+            bond_weight  = pc.get('bond_weight',  1.0),
+            clash_weight = pc.get('clash_weight', 0.1),
+            angle_weight = pc.get('angle_weight', 0.5),
+            coord_scale  = config['data'].get('coord_scale', 5.0),
+        )
+        print(f"Physics: {physics}  λ={phys_weight}")
+    else:
+        print("Physics: disabled")
 
     # ── optimiser ─────────────────────────────────────────────────────────────
     tc        = config['training']
@@ -196,7 +225,11 @@ def train(config: dict, resume_path: str = None):
         for batch in pbar:
             x0 = batch['coords'].to(device)     # (B, 10, 3)
 
-            loss = diffusion.training_loss(model, x0)
+            loss = diffusion.training_loss(
+                model, x0,
+                physics_weight = phys_weight,
+                physics_fn     = physics,
+            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -229,7 +262,11 @@ def train(config: dict, resume_path: str = None):
             with torch.no_grad():
                 for batch in val_loader:
                     x0        = batch['coords'].to(device)
-                    val_loss += diffusion.training_loss(model, x0).item()
+                    val_loss += diffusion.training_loss(
+                        model, x0,
+                        physics_weight = phys_weight,
+                        physics_fn     = physics,
+                    ).item()
                     n_val    += 1
 
             mean_val_loss = val_loss / n_val

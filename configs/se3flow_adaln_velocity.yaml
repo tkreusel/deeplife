@@ -1,0 +1,53 @@
+experiment_name: "chignolin_se3flow_adaln_velocity"
+model_type:      "se3flow_energy"
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false
+  coord_scale: 5.0
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min: 1.0e-4
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+model:
+  hidden_dim:       192
+  edge_dim:         96
+  n_layers:         7
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  n_rbf:            16
+  sep_dim:          4
+  dropout:          0.1
+  x1_pred:          false   # velocity mode — foundation for fine-tuning
+
+# ── Physics ───────────────────────────────────────────────────────────────────
+physics:
+  bond_weight:  2.0
+  clash_weight: 0.1
+  angle_weight: 0.5
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     512
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.15
+
+# ── Checkpoints — dedicated dir, never touched by fine-tune runs ──────────────
+paths:
+  checkpoint_dir: "checkpoints/se3flow_adaln_velocity"

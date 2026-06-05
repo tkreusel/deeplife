@@ -1,0 +1,56 @@
+experiment_name: "chignolin_flowmatch_energy_aa"
+model_type:      "flowmatch_energy"    # EGNNEnergyScoreNetwork + ZeroCoMFlowMatching + CFG
+
+# ── All-atom data ─────────────────────────────────────────────────────────────
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/val.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93                  # all heavy atoms (backbone + side-chains)
+  augment_se3: false
+  coord_scale: 16.32               # data std; used by AllAtomPhysics to convert to Å
+
+# ── Flow matching ─────────────────────────────────────────────────────────────
+flow:
+  sigma_min:      1.0e-4
+  harmonic_prior: true   # SHAKE-initialised x₀: all 64 covalent bonds at ideal lengths
+                         # This removes bond geometry from what the model must learn,
+                         # allowing it to focus on global structural rearrangement.
+                         # Significantly improves bond RMSE at inference.
+
+# ── EGNN velocity network with energy conditioning ────────────────────────────
+model:
+  hidden_dim:       128
+  edge_dim:         64
+  n_layers:         5
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  dropout:          0.1
+
+# ── Physics constraints (AllAtomPhysics auto-selected for n_residues=93) ──────
+# bond_weight: per-bond MSE against 64 data-derived covalent bond targets
+# clash_weight: heavy-atom steric repulsion (cutoff 2.5 Å, sep ≥ 20)
+# angle_weight: not used (mixed bond types, no single backbone angle applies)
+physics:
+  bond_weight:  1.0
+  clash_weight: 0.4    # 4× the AdaLN run — key lever from Cα ablation (clash 96%→10%)
+  angle_weight: 0.0
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size:     128          # reduced: N=93 → O(N²)=8649 pairs/structure
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+  physics_weight: 0.10         # 2× the AdaLN run; flow matching t²-weighting is better-calibrated
+
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_energy_aa"

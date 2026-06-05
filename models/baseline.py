@@ -20,22 +20,13 @@ class SinusoidalTimestepEmbedding(nn.Module):
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         device = t.device
         half   = self.dim // 2
-
-        # exponentially spaced frequencies from 1 to 10000
-        freqs = torch.exp(
+        freqs  = torch.exp(
             -math.log(10000) * torch.arange(half, device=device) / (half - 1)
-        )                                           # (half,)
-
-        # outer product: each timestep × each frequency
-        args = t.float().unsqueeze(1) * freqs.unsqueeze(0)   # (B, half)
-
-        # concatenate sin and cos
+        )                                                        # (half,)
+        args      = t.float().unsqueeze(1) * freqs.unsqueeze(0) # (B, half)
         embedding = torch.cat([args.sin(), args.cos()], dim=-1)  # (B, dim)
-
-        # if dim is odd, pad by one zero
         if self.dim % 2 == 1:
             embedding = F.pad(embedding, (0, 1))
-
         return embedding
     
 class MLPScoreNetwork(nn.Module):

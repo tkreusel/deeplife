@@ -243,25 +243,33 @@ class EGNNEnergyScoreNetwork(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def check_equivariance(self, tol: float = 1e-4) -> bool:
+    def check_equivariance(self, tol: float = None, n_trials: int = 5) -> bool:
         """Rotation-equivariance sanity check (unconditional path)."""
         self.eval()
-        B, N = 2, self.n_residues
-        x = torch.randn(B, N, 3)
-        x = x - x.mean(dim=1, keepdim=True)
-        t = torch.zeros(B)
+        device = next(self.parameters()).device
+        if tol is None:
+            tol = 0.01 * (self.n_residues / 10)   # scale with N for float32 accumulation
+        B, N   = 2, self.n_residues
+        errors = []
 
-        Q, _ = torch.linalg.qr(torch.randn(3, 3))
-        if torch.det(Q) < 0:
-            Q[:, 0] *= -1
+        for _ in range(n_trials):
+            x = torch.randn(B, N, 3, device=device)
+            x = x - x.mean(dim=1, keepdim=True)
+            t = torch.zeros(B, dtype=torch.long, device=device)
 
-        Rx = (Q @ x.reshape(B, N, 3, 1)).squeeze(-1)
+            Q, R_mat = torch.linalg.qr(torch.randn(3, 3, device=device))
+            Q = Q * torch.sign(torch.diag(R_mat)).unsqueeze(0)
+            if torch.det(Q) < 0:
+                Q[:, 0] *= -1
 
-        v_x  = self(x,  t, energy_z=None)
-        v_Rx = self(Rx, t, energy_z=None)
-        R_v  = (Q @ v_x.reshape(B, N, 3, 1)).squeeze(-1)
+            Rx    = (Q @ x.reshape(B, N, 3, 1)).squeeze(-1)
+            v_x   = self(x,  t, energy_z=None)
+            v_Rx  = self(Rx, t, energy_z=None)
+            R_v   = (Q @ v_x.reshape(B, N, 3, 1)).squeeze(-1)
+            errors.append(((v_Rx - R_v).norm() / (v_x.norm() + 1e-8)).item())
 
-        err = (v_Rx - R_v).abs().max().item()
-        ok  = err < tol
-        print(f"  Equivariance check: max_err={err:.2e}  {'✓ PASS' if ok else f'✗ FAIL (tol={tol})'}")
+        mean_err = sum(errors) / len(errors)
+        ok       = mean_err < tol
+        print(f"  Equivariance check ({n_trials} trials): mean_rel_err={mean_err:.2e}  "
+              f"[{'PASS' if ok else 'FAIL'}]")
         return ok

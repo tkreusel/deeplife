@@ -1,0 +1,51 @@
+experiment_name: "chignolin_backbone_ipa_energy"
+model_type:      "backbone_ipa_energy"
+
+data:
+  train_path:  "data_backbone/train.npz"
+  val_path:    "data_backbone/val.npz"
+  test_path:   "data_backbone/test.npz"
+  n_residues:  10
+  coord_scale: 3.42       # matches existing backbone_transformer configs
+  augment_se3: false       # no augmentation needed: torsion angles are SE(3)-invariant
+
+flow:
+  sigma_min:        1.0e-4
+  phi_source_dist:  "data"   # WrappedNormal per-dihedral (shorter flow paths)
+  psi_source_dist:  "data"
+  cart_weight:      0.1      # auxiliary Cartesian ETE+Rg loss weight
+  cosine_T0:        100      # cosine restart period [epochs]
+  cosine_T_mult:    2
+  # Self-distillation (disabled for base training; enable after convergence)
+  self_distill:        false
+  self_distill_steps:  5
+  self_distill_weight: 0.5
+
+model:
+  d_model:          256
+  n_heads:          8          # head_dim = 32
+  n_layers:         6
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15       # CFG dropout probability
+  dropout:          0.1
+  n_rbf:            16         # Gaussian RBF bases for distance encoding
+  sep_dim:          4          # sequence-separation embedding dim
+  rbf_dmax:         18.0       # max distance for RBF (Chignolin max CA-CA ~17 Å)
+  ff_mult:          2          # feed-forward hidden = ff_mult * d_model
+
+training:
+  batch_size:   512
+  lr:           1.0e-4
+  n_epochs:     4000
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+  amp:          true
+  compile:      true
+
+paths:
+  checkpoint_dir: "checkpoints/backbone_ipa"

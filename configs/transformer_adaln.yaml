@@ -1,0 +1,38 @@
+experiment_name: "chignolin_transformer_adaln"
+model_type: "transformer_adaln"
+
+data:
+  train_path:   "data/train.npz"
+  val_path:     "data/val.npz"
+  test_path:    "data/test.npz"
+  n_residues:   10
+  augment_se3:  true
+  coord_scale:  5.0
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+# Larger than the baseline transformer (128-dim, 4-layer) to give AdaLN room
+# to show its advantage. Each block's modulation head is 6*256=1536 outputs,
+# so hidden_dim drives capacity more than n_layers here.
+model:
+  hidden_dim: 256
+  n_heads:    8
+  n_layers:   6
+  time_dim:   64
+  dropout:    0.1
+
+training:
+  batch_size:   512
+  lr:           3.0e-4
+  n_epochs:     500
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+
+paths:
+  checkpoint_dir: "checkpoints/transformer_adaln"

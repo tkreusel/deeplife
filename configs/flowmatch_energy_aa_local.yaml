@@ -1,0 +1,43 @@
+experiment_name: "chignolin_flowmatch_energy_aa_local"
+model_type:      "flowmatch_energy"
+
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/valid.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93
+  augment_se3: false
+  coord_scale: 16.32
+
+flow:
+  sigma_min:      1.0e-4
+  harmonic_prior: true
+
+model:
+  hidden_dim:       32
+  edge_dim:         16
+  n_layers:         2
+  time_dim:         32
+  energy_dim:       16
+  energy_drop_prob: 0.15
+  dropout:          0.1
+
+physics:
+  bond_weight:  1.0
+  clash_weight: 0.4
+  angle_weight: 0.0
+
+training:
+  batch_size:     4
+  lr:             1.0e-4
+  n_epochs:       3
+  warmup_steps:   5
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  val_every:      1
+  save_every:     3
+  num_workers:    0
+  physics_weight: 0.10
+
+paths:
+  checkpoint_dir: "checkpoints/flowmatch_energy_aa_local"

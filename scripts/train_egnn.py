@@ -35,6 +35,7 @@ from scripts.train            import EMA, get_version_dir
 from models.baseline          import MLPScoreNetwork, TransformerScoreNetwork
 from models.egnn              import EGNNScoreNetwork
 from models.diffusion_zerocom import ZeroCoMGaussianDiffusion
+from models.physics           import ChignolinPhysics
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GPU SETUP
@@ -155,6 +156,24 @@ def train(config: dict, resume_path: str = None):
     scaler  = torch.amp.GradScaler("cuda", enabled=use_amp)
     print(f"Mixed precision (AMP): {'enabled' if use_amp else 'disabled'}")
 
+    # ── Physics constraints ───────────────────────────────────────────────────
+    # Bond-length + angle + clash loss, weighted by SNR (α̅_t) so that the
+    # penalty is only active when x0_pred is reliable (low noise timesteps).
+    physics_weight = tc.get('physics_weight', 0.0)
+    if physics_weight > 0.0:
+        phys_cfg    = config.get('physics', {})
+        coord_scale = config['data'].get('coord_scale', 5.0)
+        physics_fn  = ChignolinPhysics(
+            bond_weight  = phys_cfg.get('bond_weight',  1.0),
+            clash_weight = phys_cfg.get('clash_weight', 0.1),
+            angle_weight = phys_cfg.get('angle_weight', 0.5),
+            coord_scale  = coord_scale,
+        )
+        print(f"Physics: {physics_fn}  weight={physics_weight}")
+    else:
+        physics_fn = None
+        print("Physics: disabled")
+
     # ── EMA ───────────────────────────────────────────────────────────────────
     ema = EMA(model, decay=tc.get('ema_decay', 0.9999))
 
@@ -202,7 +221,11 @@ def train(config: dict, resume_path: str = None):
             # autocast runs eligible ops (matmul, conv) in float16/bfloat16,
             # keeping numerically sensitive ops (softmax, layernorm) in float32.
             with torch.amp.autocast("cuda", enabled=use_amp):
-                loss = diffusion.training_loss(model, x0)
+                loss = diffusion.training_loss(
+                    model, x0,
+                    physics_weight=physics_weight,
+                    physics_fn=physics_fn,
+                )
 
             # ── Backward + optimiser step ──────────────────────────────────
             # scaler.scale(loss) multiplies loss by a dynamic scale factor
@@ -236,16 +259,33 @@ def train(config: dict, resume_path: str = None):
 
         # ── Validation ────────────────────────────────────────────────────────
         mean_val = None
+        phys_log = {}
         if (epoch + 1) % tc.get('val_every', 10) == 0:
             orig = ema.apply_shadow()
             model.eval()
             val_loss, n_val = 0.0, 0
+            phys_accum: dict = {}
             with torch.no_grad(), torch.amp.autocast("cuda", enabled=use_amp):
                 for batch in val_loader:
                     x0 = batch['coords'].to(device, non_blocking=True)
-                    val_loss += diffusion.training_loss(model, x0).item()
-                    n_val    += 1
+                    val_loss += diffusion.training_loss(
+                        model, x0,
+                        physics_weight=physics_weight,
+                        physics_fn=physics_fn,
+                    ).item()
+                    n_val += 1
+                    # Log physics breakdown on one batch per val round
+                    if physics_fn is not None and n_val == 1:
+                        import torch as _torch
+                        with _torch.no_grad():
+                            t_dummy = _torch.zeros(x0.shape[0], dtype=_torch.long, device=device)
+                            x_t, _  = diffusion.q_sample(x0, t_dummy)
+                            noise_p = model(x_t, t_dummy)
+                            x0_p    = diffusion._predict_x0_from_noise(x_t, t_dummy, noise_p)
+                            phys_accum = physics_fn.breakdown(x0_p)
             mean_val = val_loss / n_val
+            if phys_accum:
+                phys_log = phys_accum
             ema.restore(orig)
 
             # Throughput estimate
@@ -275,7 +315,8 @@ def train(config: dict, resume_path: str = None):
         log({'epoch': epoch+1, 'global_step': global_step,
              'train_loss': mean_train, 'val_loss': mean_val,
              'lr': scheduler.get_last_lr()[0],
-             'epoch_time_s': epoch_time})
+             'epoch_time_s': epoch_time,
+             **phys_log})
 
         if (epoch + 1) % tc.get('save_every', 50) == 0:
             torch.save({

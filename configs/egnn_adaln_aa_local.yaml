@@ -1,0 +1,41 @@
+experiment_name: "chignolin_egnn_adaln_aa_local"
+model_type: "egnn_adaln"
+
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/valid.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93
+  augment_se3: false
+  coord_scale: 16.32
+
+diffusion:
+  T:        50
+  schedule: "cosine"
+
+model:
+  hidden_dim:       32
+  edge_dim:         16
+  n_layers:         2
+  time_dim:         32
+  energy_dim:       16
+  energy_drop_prob: 0.15
+
+physics:
+  bond_weight:  1.0
+  clash_weight: 0.1
+
+training:
+  batch_size:     4                # tiny for local test — N²=8649 pairs is heavy
+  lr:             1.0e-4
+  n_epochs:       3
+  warmup_steps:   5
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.05
+  val_every:      1
+  save_every:     3
+  num_workers:    0
+
+paths:
+  checkpoint_dir: "checkpoints/egnn_adaln_aa_local"

@@ -20,16 +20,29 @@ model:
   time_dim:   64
   dropout:    0.1              # unused by EGNN but kept for config compatibility
 
+# ── Physics constraints ───────────────────────────────────────────────────────
+# SNR-weighted penalty on x0_pred: L += physics_weight · E[α̅_t · (bond + clash + angle)]
+# α̅_t downweights physics at high noise (t≈T, x0_pred unreliable) and gives it
+# full weight at t≈0 (x0_pred is a clean reconstruction).
+# Start at 0.05; raise to 0.1 if bond validity plateaus below 60%.
+physics:
+  bond_weight:  1.0    # Cα–Cα bond MSE  (target 3.832 Å — the main failure mode)
+  clash_weight: 0.4    # raised 0.1→0.4: clash rate was 28.5% in v3, needs stronger push
+  angle_weight: 0.5    # Cα–Cα–Cα angle Huber loss (target cos ≈ 0.320)
+
 training:
-  batch_size:   512
-  lr:           1.0e-4         # slightly lower than baseline (EGNN is more sensitive)
-  n_epochs:     500
-  warmup_steps: 1000
-  grad_clip:    1.0
-  ema_decay:    0.9999
-  val_every:    10
-  save_every:   50
-  num_workers:  4
+  batch_size:     512
+  lr:             1.0e-4       # slightly lower than baseline (EGNN is more sensitive)
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.10         # raised 0.05→0.10: bond RMSE was 0.332 Å in v3
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
 
 paths:
   checkpoint_dir: "checkpoints/egnn"

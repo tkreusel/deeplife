@@ -49,10 +49,17 @@ Usage
 
 Config schema
 -------------
-Identical to flowmatch.yaml with two extra model keys:
+Identical to flowmatch.yaml with extra model keys:
     model.energy_dim        (default 32)
     model.energy_drop_prob  (default 0.15)
-model_type must be "flowmatch_energy".
+model_type must be "flowmatch_energy" or "flowmatch_v2_energy".
+
+For flowmatch_v2_energy, additional keys:
+    model.n_rbf             (default 16)  — RBF distance features
+    model.sep_dim           (default 4)   — sequence-separation embedding
+    model.x1_pred           (default false) — use x₁-prediction training
+When x1_pred=true, ZeroCoMFlowMatching.training_loss_x1pred_energy() is used
+with linear-t-weighted physics loss instead of the legacy t²-weighted version.
 """
 
 import os, sys, json, copy, argparse, yaml, time
@@ -69,6 +76,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.dataset             import get_dataloaders
 from scripts.train            import EMA, get_version_dir
 from models.egnn_energy       import EGNNEnergyScoreNetwork
+from models.egnn_v2           import EGNNv2EnergyScoreNetwork   # compat alias
+from models.se3flow_energy    import SE3FlowEnergyNet
 from models.flow_matching     import ZeroCoMFlowMatching
 
 
@@ -96,26 +105,49 @@ def setup_gpu() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_model(config: dict) -> nn.Module:
-    mt = config['model_type']
-    if mt != 'flowmatch_energy':
-        raise ValueError(
-            f"train_flow_energy.py requires model_type='flowmatch_energy', got {mt!r}.\n"
-            f"Use train_flow.py for 'flowmatch'."
-        )
-
-    mc    = config['model']
+    mt  = config['model_type']
+    mc  = config['model']
     n_res = config['data']['n_residues']
 
-    model = EGNNEnergyScoreNetwork(
-        n_residues       = n_res,
-        node_dim         = mc['hidden_dim'],
-        edge_dim         = mc.get('edge_dim', 64),
-        time_dim         = mc['time_dim'],
-        n_layers         = mc['n_layers'],
-        energy_dim       = mc.get('energy_dim', 32),
-        energy_drop_prob = mc.get('energy_drop_prob', 0.15),
-    )
-    print(f"EGNNEnergyScoreNetwork: {model.count_parameters():,} parameters")
+    if mt == 'flowmatch_energy':
+        model = EGNNEnergyScoreNetwork(
+            n_residues       = n_res,
+            node_dim         = mc['hidden_dim'],
+            edge_dim         = mc.get('edge_dim', 64),
+            time_dim         = mc['time_dim'],
+            n_layers         = mc['n_layers'],
+            energy_dim       = mc.get('energy_dim', 32),
+            energy_drop_prob = mc.get('energy_drop_prob', 0.15),
+        )
+        print(f"EGNNEnergyScoreNetwork: {model.count_parameters():,} parameters")
+
+    elif mt in ('flowmatch_v2_energy', 'se3flow_energy'):
+        # 'flowmatch_v2_energy' kept for backwards compat with old checkpoints
+        x1_pred   = mc.get('x1_pred', False)
+        self_cond = mc.get('self_cond', False)
+        model = SE3FlowEnergyNet(
+            n_residues       = n_res,
+            node_dim         = mc['hidden_dim'],
+            edge_dim         = mc.get('edge_dim', 96),
+            time_dim         = mc['time_dim'],
+            n_layers         = mc['n_layers'],
+            energy_dim       = mc.get('energy_dim', 32),
+            energy_drop_prob = mc.get('energy_drop_prob', 0.15),
+            n_rbf            = mc.get('n_rbf', 16),
+            sep_dim          = mc.get('sep_dim', 4),
+            x1_pred          = x1_pred,
+            self_cond        = self_cond,
+        )
+        print(f"SE3FlowEnergyNet: {model.count_parameters():,} parameters")
+        print(f"  n_rbf={mc.get('n_rbf',16)}  sep_dim={mc.get('sep_dim',4)}"
+              f"  x1_pred={x1_pred}  self_cond={self_cond}")
+
+    else:
+        raise ValueError(
+            f"train_flow_energy.py supports model_type in "
+            f"('flowmatch_energy', 'se3flow_energy'), got {mt!r}."
+        )
+
     print(f"  energy_dim={mc.get('energy_dim', 32)}  "
           f"p_drop={mc.get('energy_drop_prob', 0.15)}")
     model.check_equivariance()
@@ -153,12 +185,20 @@ def train(config: dict, resume_path: str = None):
 
     # ── Versioning ────────────────────────────────────────────────────────────
     base_ckpt_dir = Path(config['paths']['checkpoint_dir'])
-    if resume_path:
+    finetune      = config['training'].get('finetune', False)
+
+    if resume_path and not finetune:
+        # Normal resume: continue writing into the same directory
         ckpt_dir = Path(resume_path).parent
         print(f"Resuming: {ckpt_dir}")
     else:
+        # New run OR fine-tune: always create a fresh versioned directory so we
+        # never overwrite the source checkpoint's logs and weights.
         ckpt_dir = get_version_dir(base_ckpt_dir)
-        print(f"New run:  {ckpt_dir}")
+        if finetune and resume_path:
+            print(f"Fine-tuning from: {resume_path}  →  new dir: {ckpt_dir}")
+        else:
+            print(f"New run: {ckpt_dir}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
     config['training'].setdefault('num_workers', 4)
@@ -188,11 +228,29 @@ def train(config: dict, resume_path: str = None):
             print(f"torch.compile: skipped ({e})")
 
     # ── Flow matching framework ───────────────────────────────────────────────
-    fc        = config.get('flow', {})
+    fc       = config.get('flow', {})
+    prior_fn = None
+    if fc.get('harmonic_prior', False):
+        from functools import partial
+        from models.harmonic_prior import sample_all_atom_chain_batched, sample_ca_chain
+        n_res_prior = config['data']['n_residues']
+        cs          = config['data'].get('coord_scale', 5.0)
+        # prior_fn(B, N, device) → (B, N, 3); bind only coord_scale via partial
+        if n_res_prior != 10:
+            prior_fn = partial(sample_all_atom_chain_batched, coord_scale=cs)
+            print(f"Harmonic prior: SHAKE all-atom (N={n_res_prior})")
+        else:
+            prior_fn = partial(sample_ca_chain, coord_scale=cs)
+            print(f"Harmonic prior: Cα random-walk (N={n_res_prior})")
+
     diffusion = ZeroCoMFlowMatching(
-        sigma_min = fc.get('sigma_min', 1e-4)
+        sigma_min = fc.get('sigma_min', 1e-4),
+        prior_fn  = prior_fn,
     ).to(device)
-    print(f"ZeroCoMFlowMatching  sigma_min={diffusion.sigma_min}")
+    x1_pred = config['model'].get('x1_pred', False)
+    print(f"ZeroCoMFlowMatching  sigma_min={diffusion.sigma_min}"
+          f"  x1_pred={'enabled' if x1_pred else 'disabled'}"
+          f"  harmonic_prior={'enabled' if prior_fn else 'disabled'}")
 
     # ── Physics constraints (optional) ────────────────────────────────────────
     tc          = config['training']
@@ -200,15 +258,26 @@ def train(config: dict, resume_path: str = None):
     phys_weight = tc.get('physics_weight', 0.0)
     pc          = config.get('physics', {})
 
+    n_res = config['data']['n_residues']
     if phys_weight > 0.0 and pc:
-        from models.physics import ChignolinPhysics
-        physics = ChignolinPhysics(
-            bond_weight  = pc.get('bond_weight',  1.0),
-            clash_weight = pc.get('clash_weight', 0.1),
-            angle_weight = pc.get('angle_weight', 0.5),
-            coord_scale  = config['data'].get('coord_scale', 5.0),
-        )
-        print(f"Physics: {physics}  λ={phys_weight}")
+        if n_res != 10:
+            # All-atom data: use AllAtomPhysics (64 covalent bonds, data-derived targets)
+            from models.physics_aa import AllAtomPhysics
+            physics = AllAtomPhysics(
+                bond_weight  = pc.get('bond_weight',  1.0),
+                clash_weight = pc.get('clash_weight', 0.1),
+                coord_scale  = config['data'].get('coord_scale', 16.32),
+            )
+            print(f"Physics: AllAtomPhysics (n_residues={n_res})  λ={phys_weight}")
+        else:
+            from models.physics import ChignolinPhysics
+            physics = ChignolinPhysics(
+                bond_weight  = pc.get('bond_weight',  1.0),
+                clash_weight = pc.get('clash_weight', 0.1),
+                angle_weight = pc.get('angle_weight', 0.5),
+                coord_scale  = config['data'].get('coord_scale', 5.0),
+            )
+            print(f"Physics: {physics}  λ={phys_weight}")
     else:
         print("Physics: disabled")
 
@@ -238,16 +307,29 @@ def train(config: dict, resume_path: str = None):
     global_step   = 0
 
     if resume_path:
-        ckpt = torch.load(resume_path, map_location=device)
-        model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
-        if 'scaler' in ckpt:
-            scaler.load_state_dict(ckpt['scaler'])
-        ema.shadow    = ckpt['ema_shadow']
-        start_epoch   = ckpt['epoch'] + 1
-        global_step   = ckpt.get('global_step', start_epoch * len(train_loader))
-        best_val_loss = ckpt.get('best_val_loss', float('inf'))
-        print(f"Resumed at epoch {start_epoch}, step {global_step}")
+        ckpt        = torch.load(resume_path, map_location=device)
+        missing, unexpected = model.load_state_dict(ckpt['model'], strict=not finetune)
+        if finetune:
+            print(f"Fine-tune load: {len(missing)} missing keys (new head), "
+                  f"{len(unexpected)} unexpected keys")
+            # Don't restore optimizer/scheduler/epoch — fine-tune starts fresh
+            print("Fine-tune: optimizer, scheduler, epoch reset to 0")
+        else:
+            optimizer.load_state_dict(ckpt['optimizer'])
+            if 'scaler' in ckpt:
+                scaler.load_state_dict(ckpt['scaler'])
+            ema.shadow    = ckpt['ema_shadow']
+            start_epoch   = ckpt['epoch'] + 1
+            global_step   = ckpt.get('global_step', start_epoch * len(train_loader))
+            best_val_loss = ckpt.get('best_val_loss', float('inf'))
+            print(f"Resumed at epoch {start_epoch}, step {global_step}")
+        if finetune:
+            # Copy EMA weights even for fine-tune — gives warm-start feature quality
+            try:
+                model.load_state_dict(ckpt['ema_shadow'], strict=False)
+                print("Fine-tune: loaded EMA weights as model init")
+            except Exception:
+                pass
 
     log_path = ckpt_dir / 'log.jsonl'
 
@@ -275,11 +357,18 @@ def train(config: dict, resume_path: str = None):
             optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=use_amp):
-                loss = diffusion.training_loss_energy(
-                    model, x0, e_z,
-                    physics_weight = phys_weight,
-                    physics_fn     = physics,
-                )
+                if x1_pred:
+                    loss = diffusion.training_loss_x1pred_energy(
+                        model, x0, e_z,
+                        physics_weight = phys_weight,
+                        physics_fn     = physics,
+                    )
+                else:
+                    loss = diffusion.training_loss_energy(
+                        model, x0, e_z,
+                        physics_weight = phys_weight,
+                        physics_fn     = physics,
+                    )
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -320,11 +409,18 @@ def train(config: dict, resume_path: str = None):
                     x0    = batch['coords'].to(device, non_blocking=True)
                     e_raw = batch['energies'].to(device, non_blocking=True)
                     e_z   = (e_raw - energy_mean) / energy_std
-                    val_loss += diffusion.training_loss_energy(
-                        model, x0, e_z,
-                        physics_weight = phys_weight,
-                        physics_fn     = physics,
-                    ).item()
+                    if x1_pred:
+                        val_loss += diffusion.training_loss_x1pred_energy(
+                            model, x0, e_z,
+                            physics_weight = phys_weight,
+                            physics_fn     = physics,
+                        ).item()
+                    else:
+                        val_loss += diffusion.training_loss_energy(
+                            model, x0, e_z,
+                            physics_weight = phys_weight,
+                            physics_fn     = physics,
+                        ).item()
                     n_val += 1
 
                     if physics is not None:
@@ -409,13 +505,18 @@ def main():
     p.add_argument('--config', required=True,
                    help='Path to config yaml (e.g. configs/flowmatch_energy_local.yaml)')
     p.add_argument('--resume', default=None,
-                   help='Checkpoint to resume from')
+                   help='Checkpoint to resume from (or fine-tune from, with --finetune)')
+    p.add_argument('--finetune', action='store_true',
+                   help='Fine-tune from --resume checkpoint: load weights only, '
+                        'reset optimizer/epoch, allow missing keys (new heads)')
     args = p.parse_args()
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
     print(f"Experiment: {config['experiment_name']}")
+    if args.finetune:
+        config['training']['finetune'] = True
     train(config, resume_path=args.resume)
 
 

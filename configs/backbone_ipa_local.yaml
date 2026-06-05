@@ -1,0 +1,46 @@
+experiment_name: "chignolin_backbone_ipa_local"
+model_type:      "backbone_ipa_energy"
+
+data:
+  train_path:  "data_backbone/train.npz"
+  val_path:    "data_backbone/val.npz"
+  test_path:   "data_backbone/test.npz"
+  n_residues:  10
+  coord_scale: 3.42
+  augment_se3: false
+
+flow:
+  sigma_min:       1.0e-4
+  phi_source_dist: "uniform"  # simpler for CPU smoke test
+  psi_source_dist: "uniform"
+  cart_weight:     0.0        # disable for fast smoke test
+  self_distill:    false
+
+model:
+  d_model:          64
+  n_heads:          4          # head_dim = 16
+  n_layers:         2
+  time_dim:         32
+  energy_dim:       16
+  energy_drop_prob: 0.15
+  dropout:          0.0
+  n_rbf:            8
+  sep_dim:          4
+  rbf_dmax:         18.0
+  ff_mult:          2
+
+training:
+  batch_size:   32
+  lr:           3.0e-4
+  n_epochs:     5
+  warmup_steps: 20
+  grad_clip:    1.0
+  ema_decay:    0.999
+  val_every:    1
+  save_every:   5
+  num_workers:  0
+  amp:          false
+  compile:      false
+
+paths:
+  checkpoint_dir: "checkpoints/backbone_ipa_local"

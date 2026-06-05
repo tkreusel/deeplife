@@ -1,0 +1,37 @@
+experiment_name: "chignolin_transformer_adaln_energy"
+model_type: "transformer_adaln_energy"
+
+data:
+  train_path:   "data/train.npz"
+  val_path:     "data/val.npz"
+  test_path:    "data/test.npz"
+  n_residues:   10
+  augment_se3:  true
+  coord_scale:  5.0
+  # energy_mean / energy_std are computed at startup and written here automatically
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+model:
+  hidden_dim:       256
+  n_heads:          8
+  n_layers:         6
+  time_dim:         64
+  dropout:          0.1
+  energy_drop_prob: 0.15   # CFG dropout: 15% of training steps are unconditional
+
+training:
+  batch_size:   512
+  lr:           3.0e-4
+  n_epochs:     500
+  warmup_steps: 1000
+  grad_clip:    1.0
+  ema_decay:    0.9999
+  val_every:    10
+  save_every:   50
+  num_workers:  4
+
+paths:
+  checkpoint_dir: "checkpoints/transformer_adaln_energy"

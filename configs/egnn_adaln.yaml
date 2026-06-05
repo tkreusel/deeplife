@@ -1,0 +1,45 @@
+experiment_name: "chignolin_egnn_adaln"
+model_type: "egnn_adaln"
+
+data:
+  train_path:  "data/train.npz"
+  val_path:    "data/val.npz"
+  test_path:   "data/test.npz"
+  n_residues:  10
+  augment_se3: false        # equivariant by construction — augmentation not needed
+  coord_scale: 5.0
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+model:
+  hidden_dim:       128
+  edge_dim:         64
+  n_layers:         5
+  time_dim:         64
+  energy_dim:       32     # set to 0 to disable energy conditioning entirely
+  energy_drop_prob: 0.15   # CFG dropout — fraction of training steps with null energy
+
+# ── Physics constraints (same as best EGNN+Physics v4) ───────────────────────
+physics:
+  bond_weight:  1.0
+  clash_weight: 0.4        # raised from 0.1 — key lever that cut clash rate in v4
+  angle_weight: 0.5
+
+training:
+  batch_size:     512
+  lr:             1.0e-4
+  n_epochs:       500
+  warmup_steps:   1000
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.10     # raised from 0.05 — best setting from v3→v4 ablation
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+
+paths:
+  checkpoint_dir: "checkpoints/egnn_adaln"

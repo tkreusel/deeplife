@@ -1,0 +1,48 @@
+experiment_name: "chignolin_egnn_energy_aa"
+model_type: "egnn_energy"         # plain EGNN + energy CFG + ZeroCoM DDPM (no AdaLN)
+
+data:
+  train_path:  "data_all_atom/train.npz"
+  val_path:    "data_all_atom/val.npz"
+  test_path:   "data_all_atom/test.npz"
+  n_residues:  93
+  augment_se3: false
+  coord_scale: 16.32
+
+diffusion:
+  T:        500
+  schedule: "cosine"
+
+model:
+  hidden_dim:       128
+  edge_dim:         64
+  n_layers:         5
+  time_dim:         64
+  energy_dim:       32
+  energy_drop_prob: 0.15
+  dropout:          0.1
+
+# ── Physics (AllAtomPhysics auto-selected for n_residues=93) ─────────────────
+# Physics was only 5% of total loss at phase 1 — large headroom to increase.
+# Raised to ~15% to strongly penalise bad bonds and clashes.
+physics:
+  bond_weight:  1.5    # raised 1.0→1.5: tighten per-bond MSE targets
+  clash_weight: 0.8    # raised 0.4→0.8: main lever for clash rate (was 95%!)
+  angle_weight: 0.0    # mixed bond types, no single backbone angle applies
+
+training:
+  batch_size:     256          # keep at 256 — optimizer momentum calibrated to this
+  lr:             2.0e-4
+  n_epochs:       500          # extended: 300 original + 200 more epochs
+  warmup_steps:   500
+  grad_clip:      1.0
+  ema_decay:      0.9999
+  physics_weight: 0.20         # raised 0.10→0.20: physics ~15% of loss (safe ceiling)
+  val_every:      10
+  save_every:     50
+  num_workers:    4
+  amp:            true
+  compile:        true
+
+paths:
+  checkpoint_dir: "checkpoints/egnn_energy_aa"
